@@ -28,6 +28,7 @@ contract SponsorDAO is Ownable, AccessControl {
     // ID counter
     // -----------------------------
     uint256 private _challengeIdCounter = 1;
+
     function _getNextChallengeId() internal returns (uint256) {
         return _challengeIdCounter++;
     }
@@ -67,19 +68,11 @@ contract SponsorDAO is Ownable, AccessControl {
         uint256 endTime
     );
 
-    event ChallengeFunded(
-        uint256 indexed challengeId,
-        address indexed participant,
-        uint256 amount
-    );
+    event ChallengeFunded(uint256 indexed challengeId, address indexed participant, uint256 amount);
 
     event ChallengeVerified(uint256 indexed challengeId, bool verified);
 
-    event ChallengeCompleted(
-        uint256 indexed challengeId,
-        address indexed winner,
-        uint256 rewardAmount
-    );
+    event ChallengeCompleted(uint256 indexed challengeId, address indexed winner, uint256 rewardAmount);
 
     // -----------------------------
     // Constructor
@@ -130,15 +123,7 @@ contract SponsorDAO is Ownable, AccessControl {
         // Transfer PYUSD from creator to contract (escrow)
         pyusd.safeTransferFrom(msg.sender, address(this), stakeAmount);
 
-        emit ChallengeCreated(
-            challengeId,
-            msg.sender,
-            stakeAmount,
-            domain,
-            metadataURI,
-            startTime,
-            endTime
-        );
+        emit ChallengeCreated(challengeId, msg.sender, stakeAmount, domain, metadataURI, startTime, endTime);
 
         return challengeId;
     }
@@ -153,10 +138,7 @@ contract SponsorDAO is Ownable, AccessControl {
 
         Challenge storage c = _challenges[challengeId];
         require(c.active, "Challenge not active");
-        require(
-            block.timestamp >= c.startTime && block.timestamp <= c.endTime,
-            "Outside challenge period"
-        );
+        require(block.timestamp >= c.startTime && block.timestamp <= c.endTime, "Outside challenge period");
 
         // Transfer PYUSD from participant to contract
         pyusd.safeTransferFrom(msg.sender, address(this), amount);
@@ -183,9 +165,7 @@ contract SponsorDAO is Ownable, AccessControl {
     // Helper getters (no mappings returned)
     // -----------------------------
     /// @notice Returns the basic, serializable info of a challenge (does not return participants array length ideally)
-    function getChallengeBasicInfo(
-        uint256 challengeId
-    )
+    function getChallengeBasicInfo(uint256 challengeId)
         external
         view
         returns (
@@ -217,9 +197,7 @@ contract SponsorDAO is Ownable, AccessControl {
     }
 
     /// @notice Return participants for off-chain consumption (be careful with gas when array is big)
-    function getParticipants(
-        uint256 challengeId
-    ) external view returns (address[] memory) {
+    function getParticipants(uint256 challengeId) external view returns (address[] memory) {
         return _challenges[challengeId].participants;
     }
 

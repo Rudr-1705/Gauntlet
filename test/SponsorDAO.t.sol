@@ -41,10 +41,7 @@ contract SponsorDAOTest is Test {
     }
 
     function testRoles() public view {
-        assertTrue(
-            dao.hasRole(dao.DEFAULT_ADMIN_ROLE(), creator),
-            "Deployer should be admin"
-        );
+        assertTrue(dao.hasRole(dao.DEFAULT_ADMIN_ROLE(), creator), "Deployer should be admin");
     }
 
     function testCreateChallenge() public {
@@ -56,13 +53,7 @@ contract SponsorDAOTest is Test {
         bytes32 domain = keccak256("BLOCKCHAIN");
         string memory metadataURI = "ipfs://QmTestFile";
 
-        uint256 challengeId = dao.createChallenge(
-            stakeAmount,
-            startTime,
-            endTime,
-            domain,
-            metadataURI
-        );
+        uint256 challengeId = dao.createChallenge(stakeAmount, startTime, endTime, domain, metadataURI);
 
         assertEq(challengeId, 1);
 
