@@ -25,9 +25,6 @@ contract SponsorDAOTest is Test {
 
     function testRoles() public view {
         // The deployer should have DEFAULT_ADMIN_ROLE
-        assertTrue(
-            dao.hasRole(dao.DEFAULT_ADMIN_ROLE(), address(this)),
-            "Deployer should be admin"
-        );
+        assertTrue(dao.hasRole(dao.DEFAULT_ADMIN_ROLE(), address(this)), "Deployer should be admin");
     }
 }

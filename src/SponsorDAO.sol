@@ -58,19 +58,11 @@ contract SponsorDAO is Ownable, AccessControl {
         uint256 endTime
     );
 
-    event ChallengeFunded(
-        uint256 indexed challengeId,
-        address indexed participant,
-        uint256 amount
-    );
+    event ChallengeFunded(uint256 indexed challengeId, address indexed participant, uint256 amount);
 
     event ChallengeVerified(uint256 indexed challengeId, bool verified);
 
-    event ChallengeCompleted(
-        uint256 indexed challengeId,
-        address indexed winner,
-        uint256 rewardAmount
-    );
+    event ChallengeCompleted(uint256 indexed challengeId, address indexed winner, uint256 rewardAmount);
 
     // Constructor
     constructor() Ownable(msg.sender) {
