@@ -1,41 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// OpenZeppelin
 import "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import "lib/openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 import "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
 import "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 
-/// @title SponsorDAO (hackathon-ready slice)
+// SponsorDAO
 /// @notice Handles creation of PYUSD-based challenges and participant staking (escrow)
 contract SponsorDAO is Ownable, AccessControl {
     using SafeERC20 for IERC20;
 
-    // -----------------------------
     // Roles
-    // -----------------------------
     bytes32 public constant SPONSOR_ROLE = keccak256("SPONSOR_ROLE");
     bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
 
-    // -----------------------------
     // Token (PYUSD)
-    // -----------------------------
     /// @notice Immutable PYUSD token used for all staking/rewards
     IERC20 public immutable pyusd;
 
-    // -----------------------------
     // ID counter
-    // -----------------------------
     uint256 private _challengeIdCounter = 1;
 
     function _getNextChallengeId() internal returns (uint256) {
         return _challengeIdCounter++;
     }
 
-    // -----------------------------
     // Challenge struct
-    // -----------------------------
     /// @notice A challenge. Note: no per-participant stakes mapping — we store totalStaked and participants array.
     struct Challenge {
         address creator; // Creator of the challenge
@@ -55,9 +46,7 @@ contract SponsorDAO is Ownable, AccessControl {
     // Store challenges (challengeId => Challenge). Note: Challenge contains a dynamic array.
     mapping(uint256 => Challenge) private _challenges;
 
-    // -----------------------------
     // Events
-    // -----------------------------
     event ChallengeCreated(
         uint256 indexed challengeId,
         address indexed creator,
@@ -68,15 +57,21 @@ contract SponsorDAO is Ownable, AccessControl {
         uint256 endTime
     );
 
-    event ChallengeFunded(uint256 indexed challengeId, address indexed participant, uint256 amount);
+    event ChallengeFunded(
+        uint256 indexed challengeId,
+        address indexed participant,
+        uint256 amount
+    );
 
     event ChallengeVerified(uint256 indexed challengeId, bool verified);
 
-    event ChallengeCompleted(uint256 indexed challengeId, address indexed winner, uint256 rewardAmount);
+    event ChallengeCompleted(
+        uint256 indexed challengeId,
+        address indexed winner,
+        uint256 rewardAmount
+    );
 
-    // -----------------------------
     // Constructor
-    // -----------------------------
     /// @param _pyusd address of the PYUSD token (ERC20)
     constructor(IERC20 _pyusd) Ownable(msg.sender) {
         require(address(_pyusd) != address(0), "PYUSD cannot be zero");
@@ -88,9 +83,7 @@ contract SponsorDAO is Ownable, AccessControl {
         _setRoleAdmin(VALIDATOR_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
-    // -----------------------------
     // Create a challenge (Sponsor only)
-    // -----------------------------
     /// @notice Creates a new challenge. Creator must approve pyusd for this contract.
     /// @dev Creator is automatically added as the first participant and their stake is escrowed.
     function createChallenge(
@@ -123,14 +116,20 @@ contract SponsorDAO is Ownable, AccessControl {
         // Transfer PYUSD from creator to contract (escrow)
         pyusd.safeTransferFrom(msg.sender, address(this), stakeAmount);
 
-        emit ChallengeCreated(challengeId, msg.sender, stakeAmount, domain, metadataURI, startTime, endTime);
+        emit ChallengeCreated(
+            challengeId,
+            msg.sender,
+            stakeAmount,
+            domain,
+            metadataURI,
+            startTime,
+            endTime
+        );
 
         return challengeId;
     }
 
-    // -----------------------------
     // Fund a challenge (participant staking)
-    // -----------------------------
     /// @notice Participants call this to stake PYUSD into an existing challenge.
     /// @dev Adds participant to participants[] if first-time contributor.
     function fundChallenge(uint256 challengeId, uint256 amount) external {
@@ -138,7 +137,10 @@ contract SponsorDAO is Ownable, AccessControl {
 
         Challenge storage c = _challenges[challengeId];
         require(c.active, "Challenge not active");
-        require(block.timestamp >= c.startTime && block.timestamp <= c.endTime, "Outside challenge period");
+        require(
+            block.timestamp >= c.startTime && block.timestamp <= c.endTime,
+            "Outside challenge period"
+        );
 
         // Transfer PYUSD from participant to contract
         pyusd.safeTransferFrom(msg.sender, address(this), amount);
@@ -161,11 +163,11 @@ contract SponsorDAO is Ownable, AccessControl {
         emit ChallengeFunded(challengeId, msg.sender, amount);
     }
 
-    // -----------------------------
     // Helper getters (no mappings returned)
-    // -----------------------------
     /// @notice Returns the basic, serializable info of a challenge (does not return participants array length ideally)
-    function getChallengeBasicInfo(uint256 challengeId)
+    function getChallengeBasicInfo(
+        uint256 challengeId
+    )
         external
         view
         returns (
@@ -196,8 +198,46 @@ contract SponsorDAO is Ownable, AccessControl {
         );
     }
 
+    function verifyChallenge(
+        uint256 challengeId,
+        bool verified
+    ) external onlyRole(VALIDATOR_ROLE) {
+        Challenge storage c = _challenges[challengeId];
+
+        require(c.active, "Challenge not active");
+        require(!c.verified, "Already verified");
+
+        c.verified = verified;
+
+        emit ChallengeVerified(challengeId, verified);
+    }
+
+    /// @notice Completes a verified challenge and pays out reward
+    /// @param challengeId ID of the challenge
+    /// @param winner Address of the winner
+    function completeChallenge(
+        uint256 challengeId,
+        address winner
+    ) external onlyRole(VALIDATOR_ROLE) {
+        Challenge storage c = _challenges[challengeId];
+        require(c.active, "Challenge not active");
+        require(c.verified, "Challenge not verified");
+        require(winner != address(0), "Winner cannot be zero");
+
+        // Mark challenge inactive
+        c.active = false;
+        c.winner = winner;
+
+        // Payout totalStaked PYUSD to winner
+        pyusd.safeTransfer(winner, c.totalStaked);
+
+        emit ChallengeCompleted(challengeId, winner, c.totalStaked);
+    }
+
     /// @notice Return participants for off-chain consumption (be careful with gas when array is big)
-    function getParticipants(uint256 challengeId) external view returns (address[] memory) {
+    function getParticipants(
+        uint256 challengeId
+    ) external view returns (address[] memory) {
         return _challenges[challengeId].participants;
     }
 
