@@ -13,5 +13,13 @@ broadcast/**/dry-run/
 # Docs
 docs/
 
+
+
+
 # Node / backend deps
 node_modules/
+
+#environment
+.venv/
+__pycache__/
+*.pyc
