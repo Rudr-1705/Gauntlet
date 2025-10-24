@@ -1,0 +1,82 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Challenge {
+  id                 String   @id @default(uuid())
+  title              String
+  description        String
+  domain             String
+  reward             Float
+  status             String // pending | funded | live | completed | rejected
+  sponsorTxHash      String?
+  validatorTxHash    String?
+  judgingCriteria    String?
+  fundibility        Boolean  @default(false)
+  correctAnswerHash  String? // SHA-256 hash of correct answer
+  chainChallengeId   Int? // Challenge ID on blockchain
+  sponsorDaoAddress  String? // Address of SponsorDAO contract
+  validatorDaoAddress String? // Address of ValidatorDAO contract
+  createdAt          DateTime @default(now())
+  creator            String   @default("unknown@gauntlet.com") // Changed from creatorId for email-based auth
+  
+  Participants Participant[]
+  Submissions  Submission[]
+  Events       ChallengeEvent[]
+}
+
+model Participant {
+  id             String   @id @default(uuid())
+  userId         String // Email of participant
+  challengeId    String
+  stakeAmount    Float // PYUSD amount staked
+  stakeTxHash    String? // Transaction hash of stake
+  escrowAddress  String?
+  verified       Boolean  @default(false)
+  rewardReleased Boolean  @default(false)
+  rewardTxHash   String? // Transaction hash of reward payout
+  joinedAt       DateTime @default(now())
+
+  Challenge Challenge @relation(fields: [challengeId], references: [id])
+  Submissions Submission[]
+}
+
+model Submission {
+  id              String   @id @default(uuid())
+  participantId   String
+  challengeId     String
+  answerHash      String // SHA-256 hash of participant's answer
+  answerText      String? // Optional: encrypted or plain answer for record
+  proofURI        String? // IPFS or URL to submission details
+  status          String   @default("PENDING") // PENDING | VERIFIED | REJECTED
+  validatorTxHash String?
+  submittedAt     DateTime @default(now())
+
+  Participant Participant @relation(fields: [participantId], references: [id])
+  Challenge   Challenge   @relation(fields: [challengeId], references: [id])
+}
+
+model ChallengeEvent {
+  id          String   @id @default(uuid())
+  challengeId String
+  eventType   String // CREATED | FUNDED | VERIFIED | COMPLETED | SUBMITTED
+  txHash      String
+  blockNumber Int?
+  eventData   String? // JSON string of event data
+  timestamp   DateTime @default(now())
+
+  Challenge Challenge @relation(fields: [challengeId], references: [id])
+}
+
