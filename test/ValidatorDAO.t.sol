@@ -9,6 +9,7 @@ import "lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 /// @title Test PYUSD Token
 contract TestPYUSD is ERC20 {
     constructor() ERC20("PYUSD Test", "PYUSD") {}
+
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
@@ -52,10 +53,7 @@ contract ValidatorDAOIntegrationTest is Test {
         // Connect SponsorDAO to ValidatorDAO
         vm.startPrank(deployer);
         sponsorDAO.setValidatorDAO(address(validatorDAO));
-        sponsorDAO.grantRole(
-            sponsorDAO.VALIDATOR_ROLE(),
-            address(validatorDAO)
-        );
+        sponsorDAO.grantRole(sponsorDAO.VALIDATOR_ROLE(), address(validatorDAO));
         vm.stopPrank();
     }
 
@@ -63,11 +61,8 @@ contract ValidatorDAOIntegrationTest is Test {
         // Sponsor creates challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(sponsorDAO), 1000 * 1e18);
-        uint256 challengeId = sponsorDAO.createChallenge(
-            1000 * 1e18,
-            keccak256("Blockchain"),
-            "ipfs://challenge-metadata"
-        );
+        uint256 challengeId =
+            sponsorDAO.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://challenge-metadata");
         vm.stopPrank();
 
         bytes32 correctHash = keccak256("123456");
@@ -82,29 +77,18 @@ contract ValidatorDAOIntegrationTest is Test {
         // 2️⃣ Expect ChallengeCompleted event from SponsorDAO
         uint256 expectedTotalStaked = 1000 * 1e18 + 100 * 1e18; // creator + DAO 10%
         vm.expectEmit(true, true, false, true, address(sponsorDAO));
-        emit SponsorDAO.ChallengeCompleted(
-            challengeId,
-            participant2,
-            expectedTotalStaked
-        );
+        emit SponsorDAO.ChallengeCompleted(challengeId, participant2, expectedTotalStaked);
 
         // 3️⃣ Expect WinnerFound event
         vm.expectEmit(true, true, false, true, address(validatorDAO));
         emit ValidatorDAO.WinnerFound(challengeId, participant2);
 
         // Call submitAnswer
-        validatorDAO.submitAnswer(
-            challengeId,
-            correctHash,
-            correctHash,
-            participant2
-        );
+        validatorDAO.submitAnswer(challengeId, correctHash, correctHash, participant2);
         vm.stopPrank();
 
         // Challenge should now be inactive
-        (, , , , , bool active, , , , ) = sponsorDAO.getChallengeBasicInfo(
-            challengeId
-        );
+        (,,,,, bool active,,,,) = sponsorDAO.getChallengeBasicInfo(challengeId);
         assertFalse(active);
 
         // Winner received total stake
@@ -116,11 +100,7 @@ contract ValidatorDAOIntegrationTest is Test {
         // Sponsor creates challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(sponsorDAO), 500 * 1e18);
-        uint256 challengeId = sponsorDAO.createChallenge(
-            500 * 1e18,
-            keccak256("Solidity"),
-            "ipfs://meta"
-        );
+        uint256 challengeId = sponsorDAO.createChallenge(500 * 1e18, keccak256("Solidity"), "ipfs://meta");
         vm.stopPrank();
 
         vm.startPrank(validator);
@@ -128,27 +108,15 @@ contract ValidatorDAOIntegrationTest is Test {
         // participant1 wrong submission
         vm.expectEmit(true, true, false, true, address(validatorDAO));
         emit ValidatorDAO.AnswerSubmitted(challengeId, participant1, false);
-        validatorDAO.submitAnswer(
-            challengeId,
-            keccak256("wrong1"),
-            keccak256("answer"),
-            participant1
-        );
+        validatorDAO.submitAnswer(challengeId, keccak256("wrong1"), keccak256("answer"), participant1);
 
         // participant2 wrong submission
         vm.expectEmit(true, true, false, true, address(validatorDAO));
         emit ValidatorDAO.AnswerSubmitted(challengeId, participant2, false);
-        validatorDAO.submitAnswer(
-            challengeId,
-            keccak256("wrong2"),
-            keccak256("answer"),
-            participant2
-        );
+        validatorDAO.submitAnswer(challengeId, keccak256("wrong2"), keccak256("answer"), participant2);
 
         // Challenge still active
-        (, , , , , bool active, , , , ) = sponsorDAO.getChallengeBasicInfo(
-            challengeId
-        );
+        (,,,,, bool active,,,,) = sponsorDAO.getChallengeBasicInfo(challengeId);
         assertTrue(active);
 
         // participant1 correct submission
@@ -159,28 +127,17 @@ contract ValidatorDAOIntegrationTest is Test {
         // ChallengeCompleted from SponsorDAO
         uint256 expectedTotalStaked = 500 * 1e18 + 50 * 1e18; // creator + DAO 10%
         vm.expectEmit(true, true, false, true, address(sponsorDAO));
-        emit SponsorDAO.ChallengeCompleted(
-            challengeId,
-            participant1,
-            expectedTotalStaked
-        );
+        emit SponsorDAO.ChallengeCompleted(challengeId, participant1, expectedTotalStaked);
 
         // WinnerFound
         vm.expectEmit(true, true, false, true, address(validatorDAO));
         emit ValidatorDAO.WinnerFound(challengeId, participant1);
 
-        validatorDAO.submitAnswer(
-            challengeId,
-            keccak256("answer"),
-            keccak256("answer"),
-            participant1
-        );
+        validatorDAO.submitAnswer(challengeId, keccak256("answer"), keccak256("answer"), participant1);
         vm.stopPrank();
 
         // Challenge now inactive
-        (, , , , , active, , , , ) = sponsorDAO.getChallengeBasicInfo(
-            challengeId
-        );
+        (,,,,, active,,,,) = sponsorDAO.getChallengeBasicInfo(challengeId);
         assertFalse(active);
 
         // Winner balance

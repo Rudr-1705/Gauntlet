@@ -18,11 +18,7 @@ contract ValidatorDAO is Ownable, AccessControl {
     /// --------------------
     /// Events
     /// --------------------
-    event AnswerSubmitted(
-        uint256 indexed challengeId,
-        address indexed participant,
-        bool isCorrect
-    );
+    event AnswerSubmitted(uint256 indexed challengeId, address indexed participant, bool isCorrect);
 
     event WinnerFound(uint256 indexed challengeId, address indexed winner);
 

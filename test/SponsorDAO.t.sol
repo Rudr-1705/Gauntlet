@@ -9,6 +9,7 @@ import "lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 /// @title Test PYUSD Token
 contract TestPYUSD is ERC20 {
     constructor() ERC20("PYUSD Test", "PYUSD") {}
+
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
@@ -59,15 +60,11 @@ contract SponsorDAOTest is Test {
         // Sponsor creates a challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
-        uint256 id = dao.createChallenge(
-            1000 * 1e18,
-            keccak256("Blockchain"),
-            "ipfs://metadata"
-        );
+        uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://metadata");
         vm.stopPrank();
 
         // Verify DAO auto-time setup
-        (, , , uint256 startTime, uint256 endTime, , , , , ) = dao.getChallengeBasicInfo(id);
+        (,,, uint256 startTime, uint256 endTime,,,,,) = dao.getChallengeBasicInfo(id);
         assertEq(endTime, type(uint256).max, "End time must be 24h ahead");
 
         // Validator verifies the challenge
@@ -82,7 +79,7 @@ contract SponsorDAOTest is Test {
         vm.stopPrank();
 
         // Total stake should now be 1000 + 100 (DAO 10%) + 500 = 1600
-        (, , uint256 totalStaked, , , , , , , ) = dao.getChallengeBasicInfo(id);
+        (,, uint256 totalStaked,,,,,,,) = dao.getChallengeBasicInfo(id);
         assertEq(totalStaked, 1600 * 1e18, "Total stake should include DAO bonus");
 
         // Validator completes the challenge with participant1 as winner
@@ -95,7 +92,7 @@ contract SponsorDAOTest is Test {
         assertEq(balanceAfter - balanceBefore, 1600 * 1e18, "Winner should get total staked");
 
         // Challenge should now be inactive
-        (, , , , , bool active, , , , ) = dao.getChallengeBasicInfo(id);
+        (,,,,, bool active,,,,) = dao.getChallengeBasicInfo(id);
         assertFalse(active, "Challenge should be inactive after completion");
     }
 
@@ -110,11 +107,7 @@ contract SponsorDAOTest is Test {
         // create challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
-        uint256 id = dao.createChallenge(
-            1000 * 1e18,
-            keccak256("Blockchain"),
-            "ipfs://meta"
-        );
+        uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://meta");
         vm.stopPrank();
 
         // non-validator tries to verify
@@ -138,11 +131,7 @@ contract SponsorDAOTest is Test {
         // create challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
-        uint256 id = dao.createChallenge(
-            1000 * 1e18,
-            keccak256("Blockchain"),
-            "ipfs://meta"
-        );
+        uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://meta");
         vm.stopPrank();
 
         // attempt to complete without verification
@@ -155,11 +144,7 @@ contract SponsorDAOTest is Test {
     function testCannotCompleteTwice() public {
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
-        uint256 id = dao.createChallenge(
-            1000 * 1e18,
-            keccak256("Blockchain"),
-            "ipfs://meta"
-        );
+        uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://meta");
         vm.stopPrank();
 
         // verify & complete

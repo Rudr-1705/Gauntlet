@@ -54,22 +54,10 @@ contract SponsorDAO is Ownable, AccessControl {
         uint256 endTime
     );
 
-    event ChallengeFunded(
-        uint256 indexed id,
-        address indexed participant,
-        uint256 amount
-    );
+    event ChallengeFunded(uint256 indexed id, address indexed participant, uint256 amount);
     event ChallengeVerified(uint256 indexed id, bool verified);
-    event ChallengeCompleted(
-        uint256 indexed id,
-        address indexed winner,
-        uint256 rewardAmount
-    );
-    event ChallengeSubmitted(
-        uint256 indexed id,
-        address indexed participant,
-        string submissionURI
-    );
+    event ChallengeCompleted(uint256 indexed id, address indexed winner, uint256 rewardAmount);
+    event ChallengeSubmitted(uint256 indexed id, address indexed participant, string submissionURI);
 
     // ------------------------------
     // Constructor
@@ -91,9 +79,7 @@ contract SponsorDAO is Ownable, AccessControl {
         _setRoleAdmin(VALIDATOR_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
-    function setValidatorDAO(
-        address _validatorDAO
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setValidatorDAO(address _validatorDAO) external onlyRole(DEFAULT_ADMIN_ROLE) {
         validatorDAO = _validatorDAO;
     }
 
@@ -104,11 +90,11 @@ contract SponsorDAO is Ownable, AccessControl {
         return _challengeIdCounter++;
     }
 
-    function createChallenge(
-        uint256 stakeAmount,
-        bytes32 domain,
-        string calldata metadataURI
-    ) external onlyRole(SPONSOR_ROLE) returns (uint256) {
+    function createChallenge(uint256 stakeAmount, bytes32 domain, string calldata metadataURI)
+        external
+        onlyRole(SPONSOR_ROLE)
+        returns (uint256)
+    {
         require(stakeAmount > 0, "Stake must be > 0");
 
         uint256 id = _getNextChallengeId();
@@ -123,10 +109,7 @@ contract SponsorDAO is Ownable, AccessControl {
         uint256 totalStake = stakeAmount + daoBonus;
 
         // --- Verify DAO has enough PYUSD for its bonus ---
-        require(
-            pyusd.balanceOf(address(this)) >= daoBonus,
-            "DAO lacks PYUSD for 10% bonus"
-        );
+        require(pyusd.balanceOf(address(this)) >= daoBonus, "DAO lacks PYUSD for 10% bonus");
 
         // --- Initialize challenge data ---
         c.creator = msg.sender;
@@ -145,15 +128,7 @@ contract SponsorDAO is Ownable, AccessControl {
         pyusd.safeTransferFrom(msg.sender, address(this), stakeAmount);
 
         // --- Emit event with auto-generated time window ---
-        emit ChallengeCreated(
-            id,
-            msg.sender,
-            totalStake,
-            domain,
-            metadataURI,
-            startTime,
-            endTime
-        );
+        emit ChallengeCreated(id, msg.sender, totalStake, domain, metadataURI, startTime, endTime);
 
         return id;
     }
@@ -162,10 +137,7 @@ contract SponsorDAO is Ownable, AccessControl {
         require(amount > 0, "Amount must be > 0");
         Challenge storage c = _challenges[id];
         require(c.active, "Challenge not active");
-        require(
-            block.timestamp >= c.startTime && block.timestamp <= c.endTime,
-            "Outside challenge period"
-        );
+        require(block.timestamp >= c.startTime && block.timestamp <= c.endTime, "Outside challenge period");
 
         pyusd.safeTransferFrom(msg.sender, address(this), amount);
         c.totalStaked += amount;
@@ -202,10 +174,7 @@ contract SponsorDAO is Ownable, AccessControl {
         emit ChallengeSubmitted(id, msg.sender, submissionURI);
     }
 
-    function verifyChallenge(
-        uint256 id,
-        bool verified
-    ) external onlyRole(VALIDATOR_ROLE) {
+    function verifyChallenge(uint256 id, bool verified) external onlyRole(VALIDATOR_ROLE) {
         Challenge storage c = _challenges[id];
         require(c.active, "Challenge not active");
         require(!c.verified, "Already verified");
@@ -214,10 +183,7 @@ contract SponsorDAO is Ownable, AccessControl {
         emit ChallengeVerified(id, verified);
     }
 
-    function completeChallenge(
-        uint256 id,
-        address winner
-    ) external onlyRole(VALIDATOR_ROLE) {
+    function completeChallenge(uint256 id, address winner) external onlyRole(VALIDATOR_ROLE) {
         Challenge storage c = _challenges[id];
         require(c.active, "Challenge not active");
         require(c.verified, "Challenge not verified");
@@ -233,9 +199,7 @@ contract SponsorDAO is Ownable, AccessControl {
     // ------------------------------
     // Getter Functions
     // ------------------------------
-    function getChallengeBasicInfo(
-        uint256 id
-    )
+    function getChallengeBasicInfo(uint256 id)
         external
         view
         returns (
@@ -266,9 +230,7 @@ contract SponsorDAO is Ownable, AccessControl {
         );
     }
 
-    function getParticipants(
-        uint256 id
-    ) external view returns (address[] memory) {
+    function getParticipants(uint256 id) external view returns (address[] memory) {
         return _challenges[id].participants;
     }
 }
