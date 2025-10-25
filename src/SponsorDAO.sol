@@ -74,6 +74,14 @@ contract SponsorDAO is Ownable, AccessControl {
     // ------------------------------
     // Constructor
     // ------------------------------
+
+    /// @notice Allows the DAO owner to deposit PYUSD into the contract
+    /// @dev These funds are used for the DAO's 10% contributions to new challenges
+    function depositDAOFunds(uint256 amount) external onlyOwner {
+        require(amount > 0, "Amount must be > 0");
+        pyusd.safeTransferFrom(msg.sender, address(this), amount);
+    }
+
     constructor(IERC20 _pyusd) Ownable(msg.sender) {
         require(address(_pyusd) != address(0), "PYUSD cannot be zero");
         pyusd = _pyusd;
@@ -98,21 +106,33 @@ contract SponsorDAO is Ownable, AccessControl {
 
     function createChallenge(
         uint256 stakeAmount,
-        uint256 startTime,
-        uint256 endTime,
         bytes32 domain,
         string calldata metadataURI
     ) external onlyRole(SPONSOR_ROLE) returns (uint256) {
         require(stakeAmount > 0, "Stake must be > 0");
-        require(startTime < endTime, "Invalid time window");
 
         uint256 id = _getNextChallengeId();
         Challenge storage c = _challenges[id];
 
+        // --- Set automatic time window ---
+        uint256 startTime = block.timestamp;
+        uint256 endTime = type(uint256).max;
+
+        // --- DAO contributes 10% of creator’s stake ---
+        uint256 daoBonus = stakeAmount / 10; // 10%
+        uint256 totalStake = stakeAmount + daoBonus;
+
+        // --- Verify DAO has enough PYUSD for its bonus ---
+        require(
+            pyusd.balanceOf(address(this)) >= daoBonus,
+            "DAO lacks PYUSD for 10% bonus"
+        );
+
+        // --- Initialize challenge data ---
         c.creator = msg.sender;
         c.rewardToken = pyusd;
         c.stakeAmount = stakeAmount;
-        c.totalStaked = stakeAmount;
+        c.totalStaked = totalStake;
         c.startTime = startTime;
         c.endTime = endTime;
         c.active = true;
@@ -121,17 +141,20 @@ contract SponsorDAO is Ownable, AccessControl {
         c.metadataURI = metadataURI;
         c.participants.push(msg.sender);
 
+        // --- Transfer creator's PYUSD stake into escrow ---
         pyusd.safeTransferFrom(msg.sender, address(this), stakeAmount);
 
+        // --- Emit event with auto-generated time window ---
         emit ChallengeCreated(
             id,
             msg.sender,
-            stakeAmount,
+            totalStake,
             domain,
             metadataURI,
             startTime,
             endTime
         );
+
         return id;
     }
 

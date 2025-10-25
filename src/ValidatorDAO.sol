@@ -3,31 +3,32 @@ pragma solidity ^0.8.20;
 
 import "lib/openzeppelin-contracts/contracts/access/AccessControl.sol";
 import "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
-import "lib/openzeppelin-contracts/contracts/utils/structs/EnumerableSet.sol";
 import "./SponsorDAO.sol";
 
 /// @title ValidatorDAO
-/// @notice Connected to SponsorDAO — listens to submissions (via events),
-/// verifies zk proofs off-chain, and finalizes winners on-chain.
+/// @notice Validates answers for SponsorDAO challenges and handles winner assignment
 contract ValidatorDAO is Ownable, AccessControl {
-    using EnumerableSet for EnumerableSet.UintSet;
+    SponsorDAO public sponsorDAO;
 
     bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
 
-    SponsorDAO public sponsorDAO;
-
-    // Track which challenges have been validated to prevent double processing
+    /// Track validated challenges to prevent double-winning
     mapping(uint256 => bool) public validated;
-    EnumerableSet.UintSet private pendingChallenges;
 
-    event ChallengeReceived(uint256 indexed challengeId);
-    event ValidationResultSubmitted(
+    /// --------------------
+    /// Events
+    /// --------------------
+    event AnswerSubmitted(
         uint256 indexed challengeId,
-        address indexed winner,
-        bool success,
-        string zkProofHash
+        address indexed participant,
+        bool isCorrect
     );
 
+    event WinnerFound(uint256 indexed challengeId, address indexed winner);
+
+    /// --------------------
+    /// Constructor
+    /// --------------------
     constructor(address _sponsorDAO) Ownable(msg.sender) {
         require(_sponsorDAO != address(0), "Invalid SponsorDAO");
         sponsorDAO = SponsorDAO(_sponsorDAO);
@@ -36,59 +37,32 @@ contract ValidatorDAO is Ownable, AccessControl {
         _setRoleAdmin(VALIDATOR_ROLE, DEFAULT_ADMIN_ROLE);
     }
 
-    // -------------------------------------------------------
-    // Core Functionality
-    // -------------------------------------------------------
-
-    /// @notice Called when the off-chain listener detects a new submission event.
-    /// It tracks challenge IDs that require validation.
-    function registerChallengeForValidation(
-        uint256 challengeId
-    ) external onlyRole(VALIDATOR_ROLE) {
-        if (!pendingChallenges.contains(challengeId)) {
-            pendingChallenges.add(challengeId);
-            emit ChallengeReceived(challengeId);
-        }
-    }
-
-    /// @notice After off-chain zk verification, the validator calls this function
-    /// to finalize a challenge result and notify SponsorDAO.
-    /// @param challengeId The challenge being finalized.
-    /// @param winner The verified winner (or address(0) if none).
-    /// @param zkProofHash The IPFS or hash reference to proof data.
-    function submitValidationResult(
+    /// --------------------
+    /// Core Functionality
+    /// --------------------
+    /// @notice Submit an answer for a challenge. Always emits AnswerSubmitted.
+    /// If correct, automatically completes the challenge in SponsorDAO.
+    /// @param challengeId The challenge ID
+    /// @param submittedAnswerHash Hash of the participant's answer
+    /// @param correctAnswerHash Hash of the correct answer (sent from frontend)
+    /// @param participant Address of participant
+    function submitAnswer(
         uint256 challengeId,
-        address winner,
-        string calldata zkProofHash
+        bytes32 submittedAnswerHash,
+        bytes32 correctAnswerHash,
+        address participant
     ) external onlyRole(VALIDATOR_ROLE) {
-        require(!validated[challengeId], "Already validated");
+        require(!validated[challengeId], "Challenge already completed");
 
-        validated[challengeId] = true;
-        pendingChallenges.remove(challengeId);
+        bool isCorrect = submittedAnswerHash == correctAnswerHash;
 
-        bool success;
+        emit AnswerSubmitted(challengeId, participant, isCorrect);
 
-        if (winner == address(0)) {
-            // If no valid winner, fallback to creator
-            (address creator, , , , , , , , , ) = sponsorDAO
-                .getChallengeBasicInfo(challengeId);
-            sponsorDAO.completeChallenge(challengeId, creator);
-            success = true;
-        } else {
-            sponsorDAO.completeChallenge(challengeId, winner);
-            success = true;
+        if (isCorrect) {
+            validated[challengeId] = true;
+            sponsorDAO.verifyChallenge(challengeId, true);
+            sponsorDAO.completeChallenge(challengeId, participant);
+            emit WinnerFound(challengeId, participant);
         }
-
-        emit ValidationResultSubmitted(
-            challengeId,
-            winner,
-            success,
-            zkProofHash
-        );
-    }
-
-    /// @notice View function for all currently pending validations
-    function getPendingChallenges() external view returns (uint256[] memory) {
-        return pendingChallenges.values();
     }
 }
