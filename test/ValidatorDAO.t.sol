@@ -38,9 +38,12 @@ contract ValidatorDAOIntegrationTest is Test {
         // Deploy SponsorDAO
         vm.startPrank(deployer);
         sponsorDAO = new SponsorDAO(IERC20(address(pyusd)));
-        pyusd.mint(address(sponsorDAO), 100_000 * 1e18); // DAO funds
 
-        sponsorDAO.grantRole(sponsorDAO.SPONSOR_ROLE(), sponsor);
+        // Deposit DAO funds for 10% bonuses
+        pyusd.approve(address(sponsorDAO), 100_000 * 1e18);
+        sponsorDAO.depositDAOFunds(100_000 * 1e18);
+
+        // Grant validator role (no need for SPONSOR_ROLE)
         sponsorDAO.grantRole(sponsorDAO.VALIDATOR_ROLE(), validator);
         vm.stopPrank();
 
@@ -58,7 +61,7 @@ contract ValidatorDAOIntegrationTest is Test {
     }
 
     function testCorrectSubmissionEndsChallenge() public {
-        // Sponsor creates challenge
+        // Anyone can create challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(sponsorDAO), 1000 * 1e18);
         uint256 challengeId =
@@ -97,7 +100,7 @@ contract ValidatorDAOIntegrationTest is Test {
     }
 
     function testMultipleSubmissions() public {
-        // Sponsor creates challenge
+        // Anyone can create challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(sponsorDAO), 500 * 1e18);
         uint256 challengeId = sponsorDAO.createChallenge(500 * 1e18, keccak256("Solidity"), "ipfs://meta");
@@ -122,7 +125,6 @@ contract ValidatorDAOIntegrationTest is Test {
         // participant1 correct submission
         vm.expectEmit(true, true, false, true, address(validatorDAO));
         emit ValidatorDAO.AnswerSubmitted(challengeId, participant1, true);
-        emit ValidatorDAO.AnswerSubmitted(challengeId, participant1, true);
 
         // ChallengeCompleted from SponsorDAO
         uint256 expectedTotalStaked = 500 * 1e18 + 50 * 1e18; // creator + DAO 10%
@@ -143,5 +145,26 @@ contract ValidatorDAOIntegrationTest is Test {
         // Winner balance
         uint256 expectedBalance = 500_000 * 1e18 + 500 * 1e18 + 50 * 1e18;
         assertEq(pyusd.balanceOf(participant1), expectedBalance);
+    }
+
+    function testParticipantCanCreateAndWin() public {
+        // Test that a regular participant can create their own challenge
+        vm.startPrank(participant1);
+        pyusd.approve(address(sponsorDAO), 300 * 1e18);
+        uint256 challengeId = sponsorDAO.createChallenge(300 * 1e18, keccak256("Web3"), "ipfs://web3-meta");
+        vm.stopPrank();
+
+        (address creator,,,,,,,,,) = sponsorDAO.getChallengeBasicInfo(challengeId);
+        assertEq(creator, participant1, "Creator should be participant1");
+
+        // Another participant can win
+        bytes32 correctHash = keccak256("correct-answer");
+        vm.startPrank(validator);
+        validatorDAO.submitAnswer(challengeId, correctHash, correctHash, participant2);
+        vm.stopPrank();
+
+        // Verify participant2 won
+        uint256 expectedBalance = 500_000 * 1e18 + 300 * 1e18 + 30 * 1e18; // initial + stake + 10% bonus
+        assertEq(pyusd.balanceOf(participant2), expectedBalance);
     }
 }

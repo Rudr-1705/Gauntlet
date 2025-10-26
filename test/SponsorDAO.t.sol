@@ -45,19 +45,18 @@ contract SponsorDAOTest is Test {
         pyusd.approve(address(dao), 100_000 * 1e18);
         dao.depositDAOFunds(100_000 * 1e18);
 
-        // Grant SPONSOR_ROLE and VALIDATOR_ROLE
-        dao.grantRole(dao.SPONSOR_ROLE(), sponsor);
+        // Grant VALIDATOR_ROLE (SPONSOR_ROLE not needed since createChallenge is public)
         dao.grantRole(dao.VALIDATOR_ROLE(), validator);
 
         vm.stopPrank();
 
         // Assertions
         assertTrue(dao.hasRole(dao.DEFAULT_ADMIN_ROLE(), deployer));
-        assertTrue(dao.hasRole(dao.SPONSOR_ROLE(), sponsor));
+        assertTrue(dao.hasRole(dao.VALIDATOR_ROLE(), validator));
     }
 
     function testCompleteChallenge() public {
-        // Sponsor creates a challenge
+        // Anyone can create a challenge (no role required)
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
         uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://metadata");
@@ -65,7 +64,7 @@ contract SponsorDAOTest is Test {
 
         // Verify DAO auto-time setup
         (,,, uint256 startTime, uint256 endTime,,,,,) = dao.getChallengeBasicInfo(id);
-        assertEq(endTime, type(uint256).max, "End time must be 24h ahead");
+        assertEq(endTime, type(uint256).max, "End time must be max uint256");
 
         // Validator verifies the challenge
         vm.startPrank(validator);
@@ -104,7 +103,7 @@ contract SponsorDAOTest is Test {
     }
 
     function testOnlyValidatorCanVerify() public {
-        // create challenge
+        // Anyone can create challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
         uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://meta");
@@ -128,7 +127,7 @@ contract SponsorDAOTest is Test {
     }
 
     function testCannotCompleteUnverifiedChallenge() public {
-        // create challenge
+        // Anyone can create challenge
         vm.startPrank(sponsor);
         pyusd.approve(address(dao), 1000 * 1e18);
         uint256 id = dao.createChallenge(1000 * 1e18, keccak256("Blockchain"), "ipfs://meta");
@@ -154,5 +153,16 @@ contract SponsorDAOTest is Test {
         vm.expectRevert(bytes("Challenge not active"));
         dao.completeChallenge(id, participant1);
         vm.stopPrank();
+    }
+
+    function testAnyoneCanCreateChallenge() public {
+        // Test that participant1 (non-sponsor) can create challenge
+        vm.startPrank(participant1);
+        pyusd.approve(address(dao), 2000 * 1e18);
+        uint256 id = dao.createChallenge(2000 * 1e18, keccak256("DeFi"), "ipfs://defi-meta");
+        vm.stopPrank();
+
+        (address creator,,,,,,,,,) = dao.getChallengeBasicInfo(id);
+        assertEq(creator, participant1, "Creator should be participant1");
     }
 }

@@ -92,7 +92,6 @@ contract SponsorDAO is Ownable, AccessControl {
 
     function createChallenge(uint256 stakeAmount, bytes32 domain, string calldata metadataURI)
         external
-        onlyRole(SPONSOR_ROLE)
         returns (uint256)
     {
         require(stakeAmount > 0, "Stake must be > 0");
