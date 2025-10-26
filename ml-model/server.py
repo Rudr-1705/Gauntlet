@@ -181,12 +181,12 @@ async def generate_proposal(req: DAOProposalInput):
 if __name__ == "__main__":
     import uvicorn
     print("=" * 80)
-    print("🚀 Starting DAO Proposal Generator API (ML Model Server)")
+    print(" Starting DAO Proposal Generator API (ML Model Server)")
     print("=" * 80)
     print("Access the API at:")
     print("  • http://localhost:8080")
     print("  • http://127.0.0.1:8080")
-    print("📚 API Documentation: http://localhost:8080/docs")
+    print(" API Documentation: http://localhost:8080/docs")
     print("=" * 80)
     
     uvicorn.run(app, host="127.0.0.1", port=8080)
