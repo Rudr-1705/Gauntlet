@@ -1,0 +1,7 @@
+# Solidity files use LF
+*.sol text eol=lf
+*.t.sol text eol=lf
+
+# Optional: other text files
+*.txt text eol=lf
+*.md text eol=lf
