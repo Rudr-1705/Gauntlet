@@ -26,6 +26,7 @@ const SubmitAnswer = () => {
   const [verificationStatus, setVerificationStatus] = useState('pending'); // pending, verifying, verified, rejected
   const [events, setEvents] = useState([]);
   const [isWinner, setIsWinner] = useState(false);
+  const [submissionStep, setSubmissionStep] = useState(''); // Track current step
 
   useEffect(() => {
     if (!isFullyAuthenticated) {
@@ -43,7 +44,7 @@ const SubmitAnswer = () => {
         setChallenge(challengeData);
 
         // Check if user has joined this challenge
-        const participantsResponse = await participantsAPI.getByUserId(email);
+        const participantsResponse = await participantsAPI.getByUserId(address); // Use wallet address
         const userParticipations = participantsResponse.data.participants || participantsResponse.data.records || [];
         
         const participation = userParticipations.find(p => p.challengeId === id);
@@ -98,16 +99,37 @@ const SubmitAnswer = () => {
       return;
     }
 
+    if (!challenge.chainChallengeId) {
+      setError('Challenge is not live on blockchain yet. Please try again later.');
+      return;
+    }
+
     try {
       setSubmitting(true);
       setError(null);
 
-      // Submit answer to backend
+      // Import blockchain functions dynamically
+      const { fundChallenge } = await import('../services/contractService');
+
+      // Step 1: Stake PYUSD on blockchain (fund the challenge)
+      setSubmissionStep(`Staking ${participant.stakeAmount} PYUSD on blockchain...`);
+      console.log('Step 1: Staking PYUSD on blockchain...');
+      const fundingResult = await fundChallenge(
+        challenge.chainChallengeId,
+        participant.stakeAmount
+      );
+      
+      console.log('✅ Funding transaction confirmed:', fundingResult);
+      setSubmissionStep('Stake confirmed! Submitting answer...');
+
+      // Step 2: Submit answer to backend for validation
+      console.log('Step 2: Submitting answer to backend...');
       const response = await submissionsAPI.submit({
         challengeId: id,
-        participantEmail: email,
+        participantEmail: address, // Use wallet address as user identifier
         answer: answer.trim(),
-        proofURI: proofURI || undefined
+        proofURI: proofURI || undefined,
+        fundingTxHash: fundingResult.txHash // Include blockchain tx hash
       });
 
       const { submission, result, nextSteps } = response.data;
@@ -145,7 +167,7 @@ const SubmitAnswer = () => {
             // Check if user won (PYUSD transferred)
             const winnerEvent = statusData.events.find(e => 
               e.eventType === 'WINNER_FOUND' && 
-              e.eventData?.participantEmail === email
+              e.eventData?.participantEmail === address // Use wallet address
             );
             if (winnerEvent) {
               setIsWinner(true);
@@ -172,9 +194,20 @@ const SubmitAnswer = () => {
 
     } catch (err) {
       console.error('Error submitting answer:', err);
-      setError(handleApiError(err));
+      
+      // Better error messages
+      if (err.message?.includes('Insufficient PYUSD')) {
+        setError(`You don't have enough PYUSD to stake. Required: ${participant.stakeAmount} PYUSD. ${err.message}`);
+      } else if (err.message?.includes('user rejected')) {
+        setError('Transaction rejected. Please approve the transaction in MetaMask to submit your answer.');
+      } else if (err.code === 4001) {
+        setError('Transaction rejected. Please try again and approve both transactions (PYUSD approval + staking).');
+      } else {
+        setError(handleApiError(err));
+      }
     } finally {
       setSubmitting(false);
+      setSubmissionStep('');
     }
   };
 
@@ -467,6 +500,14 @@ const SubmitAnswer = () => {
               <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
                 <AlertCircle className="text-red-600" size={20} />
                 <p className="text-red-800">{error}</p>
+              </div>
+            )}
+
+            {/* Submission Progress */}
+            {submitting && submissionStep && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center gap-3">
+                <Loader className="animate-spin text-blue-600" size={20} />
+                <p className="text-blue-800">{submissionStep}</p>
               </div>
             )}
 

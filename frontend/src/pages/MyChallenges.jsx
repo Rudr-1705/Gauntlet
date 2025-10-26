@@ -60,14 +60,17 @@ const MyChallenges = () => {
 
   const getStatusIcon = (status) => {
     switch (status) {
+      case 'live':
       case 'funded':
         return <CheckCircle className="text-green-500" size={20} />;
       case 'pending':
         return <Clock className="text-yellow-500" size={20} />;
       case 'completed':
         return <Trophy className="text-blue-500" size={20} />;
-      default:
+      case 'rejected':
         return <XCircle className="text-red-500" size={20} />;
+      default:
+        return <Clock className="text-gray-500" size={20} />;
     }
   };
 
@@ -208,7 +211,7 @@ const MyChallenges = () => {
                 </div>
                 <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">Active</p>
                 <p className="text-4xl font-black text-gray-900 dark:text-white">
-                  {challenges.filter((c) => c.status === 'funded').length}
+                  {challenges.filter((c) => c.status === 'live' || c.status === 'funded').length}
                 </p>
               </div>
             </motion.div>
@@ -279,13 +282,15 @@ const MyChallenges = () => {
                             {challenge.title}
                           </h3>
                           <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
-                            challenge.status === 'funded' 
+                            challenge.status === 'live' || challenge.status === 'funded'
                               ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
                               : challenge.status === 'pending'
                               ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white'
                               : challenge.status === 'completed'
                               ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
-                              : 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                              : challenge.status === 'rejected'
+                              ? 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                              : 'bg-gradient-to-r from-gray-500 to-gray-600 text-white'
                           }`}>
                             {challenge.status.toUpperCase()}
                           </span>

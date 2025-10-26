@@ -50,6 +50,7 @@ const initBlockchain = async () => {
     
     if (blockchainListener) {
       console.log('Blockchain event listeners active');
+      console.log('Backend will listen for events and update database');
     } else {
       console.log('Warning: Blockchain event listeners not initialized');
     }
@@ -59,26 +60,33 @@ const initBlockchain = async () => {
   }
 };
 
-/*   BLOCKCHAIN BAAD MEIN 
-// import { ethers } from "ethers";
+/*   BLOCKCHAIN - NO PRIVATE KEY NEEDED! 
+Backend only LISTENS to events, does NOT sign transactions.
+Users sign their own transactions from frontend using MetaMask/wallet.
 
-// export const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-// export const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+import { ethers } from "ethers";
 
-// import sponsorAbi from "./abis/SponsorDAO.json" assert { type: "json" };
-// import validatorAbi from "./abis/ValidatorDAO.json" assert { type: "json" };
+// Read-only provider (no wallet needed)
+export const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
 
-// export const sponsorDAO = new ethers.Contract(
-//   process.env.SPONSOR_DAO_ADDRESS,
-//   sponsorAbi,
-//   wallet
-// );
+// NO WALLET - we only listen to events, don't sign transactions
+// Users sign their own transactions from frontend
 
-// export const validatorDAO = new ethers.Contract(
-//   process.env.VALIDATOR_DAO_ADDRESS,
-//   validatorAbi,
-//   wallet
-// );
+import sponsorAbi from "./abis/SponsorDAO.json" assert { type: "json" };
+import validatorAbi from "./abis/ValidatorDAO.json" assert { type: "json" };
+
+// Read-only contracts for listening to events
+export const sponsorDAO = new ethers.Contract(
+  process.env.SPONSOR_DAO_ADDRESS,
+  sponsorAbi,
+  provider  // Just provider, no wallet
+);
+
+export const validatorDAO = new ethers.Contract(
+  process.env.VALIDATOR_DAO_ADDRESS,
+  validatorAbi,
+  provider  // Just provider, no wallet
+);
 */
 
 const PORT = 4444;

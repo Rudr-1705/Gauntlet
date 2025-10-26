@@ -7,8 +7,9 @@ import { useWallet } from '../context/WalletContext';
 
 const MyParticipations = () => {
   const navigate = useNavigate();
-  const { email } = useWallet();
+  const { email, address } = useWallet();
   const [participations, setParticipations] = useState([]);
+  const [selectedParticipation, setSelectedParticipation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   useEffect(() => {
@@ -19,7 +20,7 @@ const MyParticipations = () => {
   }, [email, navigate]);
   useEffect(() => {
     const fetchParticipations = async () => {
-      if (!email) {
+      if (!address) {
         setLoading(false);
         return;
       }
@@ -27,23 +28,46 @@ const MyParticipations = () => {
       try {
         setLoading(true);
         setError(null);
-        const response = await participantsAPI.getByUserId(email);
+        const response = await participantsAPI.getByUserId(address); // Use wallet address
         const participationsData = Array.isArray(response.data) 
           ? response.data 
-          : (response.data?.participations || []);
-        const transformedParticipations = participationsData.map((participation) => ({
-          id: participation.id,
-          challenge: {
-            title: participation.challenge?.title || 'Unknown Challenge',
-            domain: participation.challenge?.domain || 'Other',
-            reward: participation.challenge?.reward || 0,
-          },
-          submittedAt: participation.submittedAt || participation.createdAt,
-          status: participation.status || 'JOINED',
-          rewardReleased: participation.rewardReleased || false,
-          rewardTxHash: participation.rewardTxHash || null,
-          proof: participation.proof || null,
-        }));
+          : (response.data?.participants || []);
+        const transformedParticipations = participationsData.map((participation) => {
+          // Get the latest submission status
+          const latestSubmission = participation.submissions?.[0]; // Submissions ordered by submittedAt DESC
+          let displayStatus = 'JOINED';
+          
+          // Priority: participant.status (WINNER/LOSER from backend) > submission.status
+          if (participation.status === 'WINNER') {
+            displayStatus = 'VERIFIED';
+          } else if (participation.status === 'LOSER') {
+            displayStatus = 'REJECTED';
+          } else if (latestSubmission) {
+            // Check actual submission status from database
+            displayStatus = latestSubmission.status; // PENDING, VERIFIED, or REJECTED
+          }
+          
+          return {
+            id: participation.id,
+            challengeId: participation.challengeId,
+            challenge: {
+              title: participation.challenge?.title || 'Unknown Challenge',
+              domain: participation.challenge?.domain || 'Other',
+              reward: participation.challenge?.reward || 0,
+              status: participation.challenge?.status || 'unknown',
+            },
+            submittedAt: participation.joinedAt,
+            status: displayStatus,
+            rewardReleased: participation.rewardTxHash ? true : false,
+            rewardTxHash: participation.rewardTxHash || null,
+            stakeAmount: participation.stakeAmount || 0,
+            hasSubmitted: participation.submissionCount > 0,
+            submissionCount: participation.submissionCount || 0,
+            submissions: participation.submissions || [],
+            latestSubmission: latestSubmission,
+            participantStatus: participation.status, // Store original status
+          };
+        });
         
         setParticipations(transformedParticipations);
       } catch (err) {
@@ -67,10 +91,14 @@ const MyParticipations = () => {
     switch (status) {
       case 'VERIFIED':
         return <CheckCircle className="text-green-500" size={20} />;
+      case 'PENDING':
+        return <Clock className="text-yellow-500" size={20} />;
       case 'PROOF_PENDING':
         return <Clock className="text-yellow-500" size={20} />;
       case 'REJECTED':
         return <XCircle className="text-red-500" size={20} />;
+      case 'JOINED':
+        return <FileText className="text-blue-500" size={20} />;
       default:
         return <FileText className="text-gray-500" size={20} />;
     }
@@ -79,8 +107,10 @@ const MyParticipations = () => {
   const getStatusBadge = (status) => {
     const badges = {
       VERIFIED: 'badge-success',
+      PENDING: 'badge-warning',
       PROOF_PENDING: 'badge-warning',
       REJECTED: 'badge-error',
+      JOINED: 'badge-info',
     };
     return badges[status] || 'badge';
   };
@@ -267,63 +297,85 @@ const MyParticipations = () => {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.1 * index }}
                 whileHover={{ y: -4, scale: 1.01 }}
-                className="relative group"
+                className="relative group cursor-pointer"
+                onClick={() => setSelectedParticipation(participation)}
               >
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-yellow-500 via-orange-500 to-red-500 rounded-2xl opacity-0 group-hover:opacity-100 blur transition-all duration-500"></div>
                 <div className="relative bg-white dark:bg-gray-800 rounded-2xl p-6 border-2 border-gray-200 dark:border-gray-700 group-hover:border-transparent transition-all duration-300">
-                  <div className="flex items-start space-x-4 mb-4">
-                    <div className="flex-shrink-0 mt-1">
-                      {getStatusIcon(participation.status)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 group-hover:text-orange-500 dark:group-hover:text-orange-400 transition-colors line-clamp-2">
-                        {participation.challenge.title}
-                      </h3>
-                      
-                      <div className="flex flex-wrap items-center gap-2 mb-3">
-                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
-                          participation.status === 'VERIFIED' 
-                            ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
-                            : participation.status === 'PROOF_PENDING'
-                            ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white'
-                            : 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
-                        }`}>
-                          {participation.status.replace('_', ' ')}
-                        </span>
-                        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-blue-500 to-cyan-500 text-white">
-                          {participation.challenge.domain}
-                        </span>
-                        {participation.rewardReleased && (
-                          <span className="inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-purple-500 to-pink-500 text-white animate-pulse">
-                            <Trophy size={14} />
-                            <span>PAID</span>
+                  <div className="flex items-start justify-between space-x-4 mb-4">
+                    <div className="flex items-start space-x-4">
+                      <div className="flex-shrink-0 mt-1">
+                        {getStatusIcon(participation.status)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 group-hover:text-orange-500 dark:group-hover:text-orange-400 transition-colors line-clamp-2">
+                          {participation.challenge.title}
+                        </h3>
+                        
+                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
+                            participation.status === 'VERIFIED' 
+                              ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
+                              : (participation.status === 'PENDING' || participation.status === 'PROOF_PENDING')
+                              ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white'
+                              : participation.status === 'JOINED'
+                              ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                              : 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                          }`}>
+                            {participation.status === 'VERIFIED' ? '✅ Correct!' : 
+                             participation.status === 'PENDING' ? '⏳ Verifying...' :
+                             participation.status === 'PROOF_PENDING' ? '⏳ Verifying...' :
+                             participation.status === 'REJECTED' ? '❌ Incorrect' :
+                             participation.status === 'JOINED' ? '📝 Not Submitted' :
+                             participation.status.replace('_', ' ')}
                           </span>
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-blue-500 to-cyan-500 text-white">
+                            {participation.challenge.domain}
+                          </span>
+                          {participation.rewardReleased && (
+                            <span className="inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-bold bg-gradient-to-r from-purple-500 to-pink-500 text-white animate-pulse">
+                              <Trophy size={14} />
+                              <span>PAID</span>
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                          <div className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                            <DollarSign size={18} className="text-green-600 dark:text-green-400" />
+                            <span className="font-bold text-green-700 dark:text-green-300">{participation.challenge.reward} PYUSD</span>
+                          </div>
+                          
+                          <div className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600">
+                            <Clock size={18} className="text-gray-600 dark:text-gray-400" />
+                            <span className="text-sm text-gray-600 dark:text-gray-300">
+                              {new Date(participation.submittedAt).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                        {participation.rewardTxHash && (
+                          <div className="mt-4 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl">
+                            <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 mb-1">
+                              Transaction Hash
+                            </p>
+                            <p className="text-xs font-mono text-purple-700 dark:text-purple-300 truncate">
+                              {participation.rewardTxHash}
+                            </p>
+                          </div>
                         )}
                       </div>
-                      <div className="flex flex-wrap gap-3">
-                        <div className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
-                          <DollarSign size={18} className="text-green-600 dark:text-green-400" />
-                          <span className="font-bold text-green-700 dark:text-green-300">{participation.challenge.reward} PYUSD</span>
-                        </div>
-                        
-                        <div className="flex items-center space-x-2 px-4 py-2 rounded-xl bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600">
-                          <Clock size={18} className="text-gray-600 dark:text-gray-400" />
-                          <span className="text-sm text-gray-600 dark:text-gray-300">
-                            {new Date(participation.submittedAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                      </div>
-                      {participation.rewardTxHash && (
-                        <div className="mt-4 p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl">
-                          <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 mb-1">
-                            Transaction Hash
-                          </p>
-                          <p className="text-xs font-mono text-purple-700 dark:text-purple-300 truncate">
-                            {participation.rewardTxHash}
-                          </p>
-                        </div>
-                      )}
                     </div>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedParticipation(participation);
+                      }}
+                      className="flex-shrink-0 px-4 py-2 rounded-xl font-semibold text-white bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 shadow-lg hover:shadow-xl transition-all duration-300 flex items-center space-x-2"
+                    >
+                      <FileText size={18} />
+                      <span>Details</span>
+                    </motion.button>
                   </div>
                 </div>
               </motion.div>
@@ -359,6 +411,151 @@ const MyParticipations = () => {
             </motion.button>
           </motion.div>
         )}
+        
+        {/* Participation Details Modal */}
+        <AnimatePresence>
+          {selectedParticipation && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4"
+              onClick={() => setSelectedParticipation(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex justify-between items-start mb-6">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3 mb-2">
+                      {getStatusIcon(selectedParticipation.status)}
+                      <h2 className="text-3xl font-bold text-gray-900 dark:text-white">
+                        {selectedParticipation.challenge.title}
+                      </h2>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold ${
+                        selectedParticipation.status === 'VERIFIED' 
+                          ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
+                          : selectedParticipation.status === 'PROOF_PENDING'
+                          ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white'
+                          : selectedParticipation.status === 'JOINED'
+                          ? 'bg-gradient-to-r from-blue-500 to-cyan-500 text-white'
+                          : 'bg-gradient-to-r from-red-500 to-pink-500 text-white'
+                      }`}>
+                        {selectedParticipation.status.replace('_', ' ')}
+                      </span>
+                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                        {selectedParticipation.challenge.domain}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedParticipation(null)}
+                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-3xl font-bold"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  {/* Challenge Status */}
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
+                    <p className="text-sm font-semibold text-blue-600 dark:text-blue-400 mb-1">Challenge Status</p>
+                    <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 capitalize">
+                      {selectedParticipation.challenge.status}
+                    </p>
+                  </div>
+
+                  {/* Reward & Stake Info */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
+                      <DollarSign className="text-green-500 mb-2" size={24} />
+                      <p className="text-sm font-semibold text-green-600 dark:text-green-400">Reward</p>
+                      <p className="text-2xl font-bold text-green-700 dark:text-green-300">
+                        {selectedParticipation.challenge.reward} PYUSD
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-xl">
+                      <Award className="text-purple-500 mb-2" size={24} />
+                      <p className="text-sm font-semibold text-purple-600 dark:text-purple-400">Your Stake</p>
+                      <p className="text-2xl font-bold text-purple-700 dark:text-purple-300">
+                        {selectedParticipation.stakeAmount} PYUSD
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Submission Count */}
+                  <div className="p-4 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-600 dark:text-gray-400">Submissions</p>
+                        <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                          {selectedParticipation.submissionCount} submitted
+                        </p>
+                      </div>
+                      {selectedParticipation.hasSubmitted ? (
+                        <CheckCircle className="text-green-500" size={32} />
+                      ) : (
+                        <Clock className="text-yellow-500" size={32} />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Joined Date */}
+                  <div className="p-4 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl">
+                    <Clock className="text-gray-500 mb-2" size={20} />
+                    <p className="text-sm font-semibold text-gray-600 dark:text-gray-400">Joined On</p>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">
+                      {new Date(selectedParticipation.submittedAt).toLocaleString()}
+                    </p>
+                  </div>
+
+                  {/* Reward Status */}
+                  {selectedParticipation.rewardReleased && (
+                    <div className="p-4 bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800 rounded-xl">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <Trophy className="text-purple-600 dark:text-purple-400" size={24} />
+                        <p className="text-lg font-bold text-purple-700 dark:text-purple-300">Reward Released!</p>
+                      </div>
+                      {selectedParticipation.rewardTxHash && (
+                        <div className="mt-2">
+                          <p className="text-xs font-semibold text-purple-600 dark:text-purple-400 mb-1">
+                            Transaction Hash
+                          </p>
+                          <p className="text-xs font-mono text-purple-700 dark:text-purple-300 break-all">
+                            {selectedParticipation.rewardTxHash}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex space-x-3 pt-4">
+                    <button
+                      onClick={() => setSelectedParticipation(null)}
+                      className="flex-1 px-6 py-3 rounded-xl font-semibold text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={() => navigate(`/challenge/${selectedParticipation.challengeId}/join`)}
+                      className="flex-1 px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 shadow-lg hover:shadow-xl transition-all duration-300"
+                    >
+                      View Challenge
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

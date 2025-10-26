@@ -16,6 +16,9 @@ export const challengesAPI = {
   // NEW: Create challenge with hash-based validation
   create: (challengeData) => api.post('/challenges/create', challengeData),
   
+  // Update chainChallengeId after blockchain creation
+  updateChainId: (id, data) => api.post(`/challenges/${id}/update-chain-id`, data),
+  
   // LEGACY: Get all live/funded challenges
   getLive: () => api.get('/challenges/live'),
   

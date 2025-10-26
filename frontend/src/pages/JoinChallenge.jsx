@@ -11,6 +11,7 @@ const JoinChallenge = () => {
   const { email, address, isFullyAuthenticated } = useWallet();
   
   const [challenge, setChallenge] = useState(null);
+  const [answer, setAnswer] = useState('');
   const [stakeAmount, setStakeAmount] = useState('10'); // Default 10 PYUSD
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -44,8 +45,19 @@ const JoinChallenge = () => {
   const handleJoin = async (e) => {
     e.preventDefault();
     
+    if (!answer || answer.trim().length === 0) {
+      setError('Please enter your answer to the challenge');
+      return;
+    }
+    
     if (!stakeAmount || parseFloat(stakeAmount) <= 0) {
       setError('Please enter a valid stake amount greater than 0 PYUSD');
+      return;
+    }
+
+    // Check if challenge is on blockchain
+    if (!challenge?.chainChallengeId) {
+      setError('This challenge is not yet deployed on the blockchain. Please wait for the sponsor to complete the blockchain deployment.');
       return;
     }
 
@@ -53,38 +65,61 @@ const JoinChallenge = () => {
       setSubmitting(true);
       setError(null);
 
-      // Step 1: Join challenge in backend
+      // STEP 1: Stake PYUSD on blockchain FIRST
+      console.log('🔗 Staking PYUSD on blockchain...', {
+        chainChallengeId: challenge.chainChallengeId,
+        stakeAmount: stakeAmount
+      });
+      
+      const { fundChallenge } = await import('../services/contractService');
+      
+      let fundingResult;
+      try {
+        fundingResult = await fundChallenge(challenge.chainChallengeId, stakeAmount);
+        console.log('✅ Blockchain staking successful:', fundingResult);
+      } catch (blockchainError) {
+        console.error('❌ Blockchain staking failed:', blockchainError);
+        
+        // Enhanced error messages
+        if (blockchainError.message?.includes('Insufficient PYUSD')) {
+          throw new Error(`You don't have enough PYUSD tokens. Required: ${stakeAmount} PYUSD. Please acquire PYUSD tokens to participate.`);
+        } else if (blockchainError.code === 4001 || blockchainError.message?.includes('rejected')) {
+          throw new Error('Transaction rejected. Please approve both PYUSD approval and staking transactions in MetaMask.');
+        } else if (blockchainError.message?.includes('network')) {
+          throw new Error('Network error. Please make sure you are connected to Sepolia testnet.');
+        } else {
+          throw new Error('Blockchain staking failed: ' + blockchainError.message);
+        }
+      }
+
+      // STEP 2: Send to backend with blockchain tx hash
+      console.log('📤 Submitting to backend with tx hash:', fundingResult.txHash);
+      
       const response = await participantsAPI.join({
-        userEmail: email,
+        userEmail: address,
         challengeId: id,
         stakeAmount: parseFloat(stakeAmount),
-        walletAddress: address
+        walletAddress: address,
+        answer: answer.trim(),
+        fundingTxHash: fundingResult.txHash // Include blockchain tx hash
       });
 
-      const { participant, nextStep } = response.data;
+      const { participant } = response.data;
 
-      // Step 2: Show success and blockchain instructions
+      // Step 3: Show success
       setSuccess(true);
+      setTxHash(fundingResult.txHash);
       
-      // TODO: Integrate with blockchain contract
-      // For now, simulate blockchain transaction
-      console.log('Next step:', nextStep);
-      console.log('Participant created:', participant);
-      
-      // Simulate tx hash (replace with actual blockchain call)
-      const mockTxHash = '0x' + Math.random().toString(16).substring(2, 66);
-      setTxHash(mockTxHash);
-
-      // Step 3: Confirm stake transaction (optional for now)
-      // await participantsAPI.confirmStake(participant.id, mockTxHash);
+      console.log('✅ Participant joined successfully:', participant);
+      console.log('🔗 Blockchain TX:', fundingResult.txHash);
 
       setTimeout(() => {
         navigate('/my-participations');
       }, 3000);
 
     } catch (err) {
-      console.error('Error joining challenge:', err);
-      setError(handleApiError(err));
+      console.error('❌ Error joining challenge:', err);
+      setError(err.message || handleApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -191,9 +226,29 @@ const JoinChallenge = () => {
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex gap-3">
               <Info className="text-blue-600 flex-shrink-0" size={20} />
               <div className="text-sm text-blue-800">
-                <p className="font-semibold mb-1">How Staking Works:</p>
-                <p>Your stake represents your confidence level. Stake more to show higher confidence in your answer. If you win, you get your stake back plus the reward!</p>
+                <p className="font-semibold mb-1">How It Works:</p>
+                <p>1. Submit your answer (it will be hashed for privacy)</p>
+                <p>2. Stake PYUSD to show your confidence</p>
+                <p>3. If correct, win the reward + get your stake back!</p>
               </div>
+            </div>
+
+            {/* Answer Input */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Your Answer *
+              </label>
+              <textarea
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none"
+                placeholder="Enter your answer to this challenge..."
+                rows="4"
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Your answer will be securely hashed. You can prove it later if you win!
+              </p>
             </div>
 
             {/* Stake Amount Input */}
@@ -282,9 +337,9 @@ const JoinChallenge = () => {
             {/* Submit Button */}
             <button
               type="submit"
-              disabled={submitting || !stakeAmount}
+              disabled={submitting || !stakeAmount || !answer}
               className={`w-full py-3 rounded-lg font-semibold text-white transition-all flex items-center justify-center gap-2 ${
-                submitting || !stakeAmount
+                submitting || !stakeAmount || !answer
                   ? 'bg-gray-400 cursor-not-allowed'
                   : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700'
               }`}
@@ -297,7 +352,7 @@ const JoinChallenge = () => {
               ) : (
                 <>
                   <Shield size={20} />
-                  <span>Join Challenge & Stake {stakeAmount} PYUSD</span>
+                  <span>Submit Answer & Stake {stakeAmount} PYUSD</span>
                 </>
               )}
             </button>

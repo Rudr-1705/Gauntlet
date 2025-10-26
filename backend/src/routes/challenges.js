@@ -98,21 +98,23 @@ async function processMLClassification(challengeId, title, description, stakeAmo
     const challenge_text=description;
     const requested_reward=stakeAmount;
     console.log(`[ML Classification] Processing challenge ${challengeId}...`);
-    console.log(`[ML Classification] Calling ML Model at: ${ML_MODEL_URL}/generate_proposal`);
+    console.log(`[ML Classification] Calling ML Model at: ${ML_MODEL_URL}/classify`);
 
-    const mlResponse = await axios.post(`${ML_MODEL_URL}/generate_proposal`, {
+    const mlResponse = await axios.post(`${ML_MODEL_URL}/classify`, {
       challenge_id,
       challenge_text,
       requested_reward,
+      proposer_wallet: walletAddress || null,
+      urgency_level: "medium"
     }, {
       timeout: 60000  // Increased timeout for ML processing
     });
 
-    const { fungible, domain } = mlResponse.data;
+    const { fundible, domain } = mlResponse.data;
     console.log(`[ML Classification] Response received:`, mlResponse.data);
 
-    console.log(`[ML Classification] Challenge ${challengeId} - Fundible: ${fungible}, Domain: ${domain}`);
-    const isFundible = fungible === "yes" || fungible === true;
+    console.log(`[ML Classification] Challenge ${challengeId} - Fundible: ${fundible}, Domain: ${domain}`);
+    const isFundible = fundible === "yes" || fundible === true;
 
     const updatedChallenge = await prisma.challenge.update({
       where: { id: challengeId },
@@ -126,70 +128,29 @@ async function processMLClassification(challengeId, title, description, stakeAmo
       console.log(`[SponsorDAO] Challenge ${challengeId} is fundible. Sending to blockchain...`);
       
       try {
-        // TODO: Integrate with actual SponsorDAO contract
-        // For now, simulate blockchain transaction
-        const mockTxHash = '0x' + Math.random().toString(16).substring(2, 66);
+        // CREATOR MUST CALL SponsorDAO.createChallenge() FROM FRONTEND
+        // Backend just updates DB - no private key needed here
+        // Frontend will call: createChallenge(stakeAmount, domain, metadataURI)
+        // Then blockchain emits ChallengeCreated event with chainChallengeId
+        // Our event listener will catch it and update the DB
         
-        // Simulate blockchain call (replace with actual ethers.js integration)
-        // const { ethers } = await import("ethers");
-        // const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-        // const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-        // const sponsorDao = new ethers.Contract(
-        //   process.env.SPONSOR_DAO_ADDRESS,
-        //   sponsorDaoAbi,
-        //   wallet
-        // );
-        // const tx = await sponsorDao.createChallenge(
-        //   stakeAmount,
-        //   domain,
-        //   walletAddress,
-        //   "RandommetaDataUri",
-        //   `ipfs://challenge-${challengeId}`
-        // );
-        // await tx.wait();
-        
+        // Mark as 'funded' status (waiting for creator to fund on blockchain)
         await prisma.challenge.update({
           where: { id: challengeId },
           data: {
-            sponsorTxHash: mockTxHash,
-            status: 'funded'
+            status: 'funded', // Creator needs to call createChallenge on-chain
+            sponsorDaoAddress: process.env.SPONSOR_DAO_ADDRESS
           }
         });
 
-        console.log(`[SponsorDAO] Challenge ${challengeId} funded with tx: ${mockTxHash}`);
+        console.log(`[SponsorDAO] Challenge ${challengeId} approved. Creator must now call createChallenge() on SponsorDAO.`);
 
-        setTimeout(async () => {
-          try {
-            await prisma.challenge.update({
-              where: { id: challengeId },
-              data: { status: 'live' }
-            });
-
-            // Create event log
-            await prisma.challengeEvent.create({
-              data: {
-                challengeId,
-                eventType: 'WENT_LIVE',
-                txHash: mockTxHash,
-                blockNumber: 0,
-                eventData: JSON.stringify({ 
-                  domain, 
-                  fundible: true,
-                  message: 'Challenge went live after ML approval'
-                })
-              }
-            });
-
-            console.log(`[Status Update] Challenge ${challengeId} is now LIVE!`);
-          } catch (err) {
-            console.error(`[Status Update] Error updating challenge ${challengeId} to live:`, err);
-          }
-        }, 10000); // 10 second delay
+        // After creator funds on blockchain, event listener will update status to 'live'
 
       } catch (blockchainError) {
-        console.error(`[SponsorDAO] Error sending challenge ${challengeId} to blockchain:`, blockchainError);
+        console.error(`[SponsorDAO] Error updating challenge ${challengeId}:`, blockchainError);
         
-        // Mark as rejected if blockchain fails
+        // Mark as rejected if update fails
         await prisma.challenge.update({
           where: { id: challengeId },
           data: { status: 'rejected' }
@@ -309,7 +270,8 @@ router.get("/:id", async (req, res) => {
             id: true,
             userId: true,
             stakeAmount: true,
-            verified: true,
+            status: true,
+            walletAddress: true,
             joinedAt: true
           }
         },
@@ -433,6 +395,88 @@ router.patch("/status/:id", async (req, res) => {
   } catch (error) {
     console.error("Error updating challenge status:", error);
     res.status(500).json({ success: false, error: "Failed to update challenge" });
+  }
+});
+
+/**
+ * POST /api/challenges/:id/update-chain-id
+ * Update chainChallengeId after frontend creates challenge on blockchain
+ */
+router.post("/:id/update-chain-id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { chainChallengeId, txHash, blockNumber } = req.body;
+
+    console.log(`[update-chain-id] Received request for challenge ${id}:`, { chainChallengeId, txHash, blockNumber });
+
+    if (!chainChallengeId) {
+      console.error('[update-chain-id] Missing chainChallengeId');
+      return res.status(400).json({ 
+        success: false, 
+        error: "chainChallengeId is required" 
+      });
+    }
+
+    // Check if challenge exists first
+    const existingChallenge = await prisma.challenge.findUnique({
+      where: { id }
+    });
+
+    if (!existingChallenge) {
+      console.error(`[update-chain-id] Challenge ${id} not found`);
+      return res.status(404).json({
+        success: false,
+        error: "Challenge not found"
+      });
+    }
+
+    console.log(`[update-chain-id] Updating challenge ${id}...`);
+
+    // Update challenge with blockchain data
+    // chainChallengeId is Int in schema, convert from string
+    const updatedChallenge = await prisma.challenge.update({
+      where: { id },
+      data: {
+        chainChallengeId: parseInt(chainChallengeId, 10),
+        status: 'live' // Challenge is now live on blockchain
+      }
+    });
+
+    console.log(`[update-chain-id] Challenge updated, creating event log...`);
+
+    // Create event log
+    await prisma.challengeEvent.create({
+      data: {
+        challengeId: id,
+        eventType: 'CHALLENGE_CREATED',
+        txHash: txHash || null,
+        blockNumber: blockNumber ? parseInt(blockNumber, 10) : null,
+        eventData: JSON.stringify({ 
+          chainChallengeId: parseInt(chainChallengeId, 10)
+        })
+      }
+    });
+
+    console.log(`[Blockchain] Challenge ${id} created on-chain with ID: ${chainChallengeId}`);
+
+    res.json({ 
+      success: true, 
+      message: "Challenge chain ID updated successfully",
+      challenge: updatedChallenge 
+    });
+
+  } catch (error) {
+    console.error("[update-chain-id] Error updating chain ID:", error);
+    console.error("[update-chain-id] Error details:", {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({ 
+      success: false, 
+      error: "Failed to update chain ID",
+      details: error.message 
+    });
   }
 });
 

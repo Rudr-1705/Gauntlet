@@ -43,10 +43,9 @@ model Participant {
   challengeId    String
   stakeAmount    Float // PYUSD amount staked
   stakeTxHash    String? // Transaction hash of stake
-  escrowAddress  String?
-  verified       Boolean  @default(false)
-  rewardReleased Boolean  @default(false)
-  rewardTxHash   String? // Transaction hash of reward payout
+  walletAddress  String? // Participant's wallet address (msg.sender when calling SponsorDAO)
+  status         String   @default("PENDING") // PENDING | STAKED | WINNER | LOSER
+  rewardTxHash   String? // Transaction hash of reward payout from SponsorDAO
   joinedAt       DateTime @default(now())
 
   Challenge Challenge @relation(fields: [challengeId], references: [id])
@@ -72,7 +71,7 @@ model ChallengeEvent {
   id          String   @id @default(uuid())
   challengeId String
   eventType   String // CREATED | FUNDED | VERIFIED | COMPLETED | SUBMITTED
-  txHash      String
+  txHash      String?
   blockNumber Int?
   eventData   String? // JSON string of event data
   timestamp   DateTime @default(now())

@@ -194,7 +194,8 @@ router.get("/challenge/:challengeId", async (req, res) => {
           select: {
             userId: true,
             stakeAmount: true,
-            verified: true
+            status: true,
+            walletAddress: true
           }
         }
       },
@@ -274,8 +275,9 @@ router.get("/user/:email", async (req, res) => {
         Participant: {
           select: {
             stakeAmount: true,
-            verified: true,
-            rewardReleased: true
+            status: true,
+            walletAddress: true,
+            rewardTxHash: true
           }
         }
       },
@@ -306,11 +308,11 @@ router.patch("/:id/status", async (req, res) => {
       }
     });
 
-    // If verified, update participant
+    // If verified, update participant to WINNER status
     if (status === 'VERIFIED') {
       await prisma.participant.update({
         where: { id: submission.participantId },
-        data: { verified: true }
+        data: { status: 'WINNER' }
       });
     }
 
@@ -350,8 +352,9 @@ router.get("/:id", async (req, res) => {
           select: {
             userId: true,
             stakeAmount: true,
-            verified: true,
-            rewardReleased: true
+            status: true,
+            walletAddress: true,
+            rewardTxHash: true
           }
         }
       }

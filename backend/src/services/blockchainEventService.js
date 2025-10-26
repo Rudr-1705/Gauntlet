@@ -13,8 +13,8 @@ const SPONSOR_DAO_EVENTS = [
 ];
 
 const VALIDATOR_DAO_EVENTS = [
-  "event ChallengeReceived(uint256 indexed challengeId)",
-  "event ValidationResultSubmitted(uint256 indexed challengeId, address indexed winner, bool success, string zkProofHash)"
+  "event AnswerSubmitted(uint256 indexed challengeId, address indexed participant, bool isCorrect)",
+  "event WinnerFound(uint256 indexed challengeId, address indexed winner)"
 ];
 
 /**
@@ -60,12 +60,12 @@ export async function initializeEventListeners(rpcUrl, sponsorDaoAddress, valida
     });
 
     // Listen to ValidatorDAO events
-    validatorDao.on('ChallengeReceived', async (challengeId, event) => {
-      await handleChallengeReceived(challengeId, event);
+    validatorDao.on('AnswerSubmitted', async (challengeId, participant, isCorrect, event) => {
+      await handleAnswerSubmitted(challengeId, participant, isCorrect, event);
     });
 
-    validatorDao.on('ValidationResultSubmitted', async (challengeId, winner, success, zkProofHash, event) => {
-      await handleValidationResult(challengeId, winner, success, zkProofHash, event);
+    validatorDao.on('WinnerFound', async (challengeId, winner, event) => {
+      await handleWinnerFound(challengeId, winner, event);
     });
 
     return { sponsorDao, validatorDao, provider };
@@ -115,51 +115,6 @@ async function handleChallengeCreated(id, creator, stakeAmount, domain, metadata
     }
   } catch (error) {
     console.error('Error handling ChallengeCreated:', error);
-  }
-}
-
-async function handleChallengeFunded(id, participant, amount, event) {
-  try {
-    console.log(`ChallengeFunded Event: ID=${id}, Participant=${participant}, Amount=${amount}`);
-    
-    const challenge = await prisma.challenge.findFirst({
-      where: { chainChallengeId: Number(id) }
-    });
-
-    if (challenge) {
-      // Update participant stake
-      const participantRecord = await prisma.participant.findFirst({
-        where: {
-          challengeId: challenge.id,
-          userId: participant.toLowerCase()
-        }
-      });
-
-      if (participantRecord) {
-        await prisma.participant.update({
-          where: { id: participantRecord.id },
-          data: {
-            stakeTxHash: event.transactionHash,
-            stakeAmount: Number(ethers.formatUnits(amount, 6)) // PYUSD has 6 decimals
-          }
-        });
-      }
-
-      // Store event
-      await prisma.challengeEvent.create({
-        data: {
-          challengeId: challenge.id,
-          eventType: 'FUNDED',
-          txHash: event.transactionHash,
-          blockNumber: event.blockNumber,
-          eventData: JSON.stringify({ participant, amount: amount.toString() })
-        }
-      });
-
-      console.log(`Participant ${participant} funding recorded`);
-    }
-  } catch (error) {
-    console.error('Error handling ChallengeFunded:', error);
   }
 }
 
@@ -225,8 +180,7 @@ async function handleChallengeCompleted(id, winner, rewardAmount, event) {
         await prisma.participant.update({
           where: { id: winnerParticipant.id },
           data: {
-            verified: true,
-            rewardReleased: true,
+            status: 'WINNER',
             rewardTxHash: event.transactionHash
           }
         });
@@ -254,10 +208,55 @@ async function handleChallengeSubmitted(id, participant, submissionURI, event) {
     console.log(`ChallengeSubmitted Event: ID=${id}, Participant=${participant}`);
     
     const challenge = await prisma.challenge.findFirst({
-      where: { chainChallengeId: Number(id) }
+      where: { chainChallengeId: Number(id) },
+      select: {
+        id: true,
+        chainChallengeId: true,
+        correctAnswerHash: true,
+        validatorDaoAddress: true
+      }
     });
 
     if (challenge) {
+      // Find participant and their submission
+      const participantRecord = await prisma.participant.findFirst({
+        where: {
+          challengeId: challenge.id,
+          walletAddress: participant.toLowerCase()
+        },
+        include: {
+          Submissions: {
+            where: { status: 'PENDING' },
+            orderBy: { submittedAt: 'desc' },
+            take: 1
+          }
+        }
+      });
+
+      if (participantRecord && participantRecord.Submissions.length > 0) {
+        const submission = participantRecord.Submissions[0];
+
+        // Update submission status to SUBMITTED
+        await prisma.submission.update({
+          where: { id: submission.id },
+          data: { status: 'SUBMITTED' }
+        });
+
+        console.log(`Submission ${submission.id} marked as SUBMITTED. Triggering ValidatorDAO...`);
+
+        // 🚀 TRIGGER VALIDATORDAO VERIFICATION
+        // Import and call submitToValidatorDAO
+        const { submitToValidatorDAO } = await import('./validatorService.js');
+        
+        // Call ValidatorDAO.submitAnswer() to verify on-chain
+        const validatorResult = await submitToValidatorDAO(submission, challenge, participantRecord);
+        
+        console.log(`ValidatorDAO verification triggered:`, validatorResult);
+      } else {
+        console.warn(`No pending submission found for participant ${participant} in challenge ${challenge.id}`);
+      }
+
+      // Log event
       await prisma.challengeEvent.create({
         data: {
           challengeId: challenge.id,
@@ -275,53 +274,165 @@ async function handleChallengeSubmitted(id, participant, submissionURI, event) {
   }
 }
 
-async function handleChallengeReceived(challengeId, event) {
+// ValidatorDAO event handlers
+async function handleAnswerSubmitted(challengeId, participant, isCorrect, event) {
   try {
-    console.log(`ChallengeReceived Event (ValidatorDAO): ID=${challengeId}`);
+    console.log(`AnswerSubmitted Event (ValidatorDAO): ID=${challengeId}, Participant=${participant}, IsCorrect=${isCorrect}`);
     
     const challenge = await prisma.challenge.findFirst({
       where: { chainChallengeId: Number(challengeId) }
     });
 
     if (challenge) {
+      // Find the participant and submission
+      const participantRecord = await prisma.participant.findFirst({
+        where: {
+          challengeId: challenge.id,
+          walletAddress: participant.toLowerCase()
+        },
+        include: {
+          Submissions: {
+            orderBy: { submittedAt: 'desc' },
+            take: 1
+          }
+        }
+      });
+
+      if (participantRecord && participantRecord.Submissions.length > 0) {
+        const submission = participantRecord.Submissions[0];
+        
+        // Update submission status based on correctness
+        await prisma.submission.update({
+          where: { id: submission.id },
+          data: {
+            status: isCorrect ? 'VERIFIED' : 'REJECTED'
+          }
+        });
+
+        console.log(`Submission ${submission.id} marked as ${isCorrect ? 'VERIFIED' : 'REJECTED'}`);
+      }
+
+      // Log event
       await prisma.challengeEvent.create({
         data: {
           challengeId: challenge.id,
-          eventType: 'RECEIVED_BY_VALIDATOR',
+          eventType: 'ANSWER_SUBMITTED',
           txHash: event.transactionHash,
           blockNumber: event.blockNumber,
-          eventData: JSON.stringify({ challengeId: Number(challengeId) })
+          eventData: JSON.stringify({ participant, isCorrect })
         }
       });
     }
   } catch (error) {
-    console.error('Error handling ChallengeReceived:', error);
+    console.error('Error handling AnswerSubmitted:', error);
   }
 }
 
-async function handleValidationResult(challengeId, winner, success, zkProofHash, event) {
+async function handleWinnerFound(challengeId, winner, event) {
   try {
-    console.log(`ValidationResultSubmitted Event: ID=${challengeId}, Winner=${winner}, Success=${success}`);
+    console.log(`WinnerFound Event (ValidatorDAO): ID=${challengeId}, Winner=${winner}`);
     
     const challenge = await prisma.challenge.findFirst({
       where: { chainChallengeId: Number(challengeId) }
     });
 
     if (challenge) {
-      await prisma.challengeEvent.create({
-        data: {
+      // Find winner participant
+      const winnerParticipant = await prisma.participant.findFirst({
+        where: {
           challengeId: challenge.id,
-          eventType: 'VALIDATION_RESULT',
-          txHash: event.transactionHash,
-          blockNumber: event.blockNumber,
-          eventData: JSON.stringify({ winner, success, zkProofHash })
+          walletAddress: winner.toLowerCase()
         }
       });
 
-      console.log(`Validation result recorded for challenge ${challenge.id}`);
+      if (winnerParticipant) {
+        // Update participant as winner
+        await prisma.participant.update({
+          where: { id: winnerParticipant.id },
+          data: { status: 'WINNER' }
+        });
+
+        console.log(`Participant ${winnerParticipant.id} marked as WINNER`);
+      }
+
+      // Log event
+      await prisma.challengeEvent.create({
+        data: {
+          challengeId: challenge.id,
+          eventType: 'WINNER_FOUND',
+          txHash: event.transactionHash,
+          blockNumber: event.blockNumber,
+          eventData: JSON.stringify({ winner })
+        }
+      });
     }
   } catch (error) {
-    console.error('Error handling ValidationResult:', error);
+    console.error('Error handling WinnerFound:', error);
+  }
+}
+
+async function handleChallengeFunded(id, participant, amount, event) {
+  try {
+    console.log(`ChallengeFunded Event: ChallengeID=${id}, Participant=${participant}, Amount=${amount}`);
+    
+    const challenge = await prisma.challenge.findFirst({
+      where: { chainChallengeId: Number(id) }
+    });
+
+    if (challenge) {
+      // Find the participant by wallet address
+      const participantRecord = await prisma.participant.findFirst({
+        where: {
+          challengeId: challenge.id,
+          walletAddress: participant.toLowerCase()
+        }
+      });
+
+      if (participantRecord) {
+        // Update participant with stake transaction hash
+        await prisma.participant.update({
+          where: { id: participantRecord.id },
+          data: {
+            stakeTxHash: event.transactionHash,
+            stakeAmount: parseFloat(ethers.formatEther(amount))
+          }
+        });
+
+        // Update submission status to SUBMITTED (answer already stored in DB)
+        await prisma.submission.updateMany({
+          where: {
+            participantId: participantRecord.id,
+            status: 'PENDING'
+          },
+          data: {
+            status: 'SUBMITTED'
+          }
+        });
+
+        // Create event record
+        await prisma.challengeEvent.create({
+          data: {
+            challengeId: challenge.id,
+            eventType: 'PARTICIPANT_FUNDED',
+            txHash: event.transactionHash,
+            blockNumber: event.blockNumber,
+            eventData: JSON.stringify({ 
+              participant, 
+              amount: amount.toString()
+            })
+          }
+        });
+
+        console.log(`Participant ${participant} funded challenge ${challenge.id} with ${ethers.formatEther(amount)} PYUSD`);
+
+        // TODO: Backend should now trigger ValidatorDAO to verify the answer
+        // ValidatorDAO will call completeChallenge(id, winner) if answer is correct
+      } else {
+        console.warn(`Participant record not found for ${participant} in challenge ${challenge.id}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error handling ChallengeFunded:', error);
   }
 }
 

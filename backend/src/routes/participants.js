@@ -1,6 +1,8 @@
 import express from "express";
+import crypto from "crypto";
 import { PrismaClient } from "../generated/prisma/index.js";
 import { generateProof } from "../services/aiService.js";
+import { verifyParticipantAnswer, releaseReward } from "../services/answerVerificationService.js";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -16,6 +18,7 @@ router.post("/join", async (req, res) => {
       challengeId,
       stakeAmount,
       walletAddress,
+      answer, // Plain text answer from user
       // Old format support
       userId
     } = req.body;
@@ -31,12 +34,27 @@ router.post("/join", async (req, res) => {
       });
     }
 
+    if (!answer || answer.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Answer is required"
+      });
+    }
+
     if (parseFloat(stakeAmount) <= 0) {
       return res.status(400).json({
         success: false,
         error: "Stake amount must be greater than 0 PYUSD"
       });
     }
+
+    // Hash the answer on backend for security
+    const answerHash = '0x' + crypto
+      .createHash('sha256')
+      .update(answer.trim().toLowerCase())
+      .digest('hex');
+
+    console.log('Answer hashed:', answerHash);
 
     // Check if challenge exists and is accepting participants
     const challenge = await prisma.challenge.findUnique({
@@ -64,10 +82,10 @@ router.post("/join", async (req, res) => {
       });
     }
 
-    // Check if user already joined
+    // Check if user already joined (using wallet address as userId for blockchain integration)
     const existingParticipant = await prisma.participant.findFirst({
       where: {
-        userId: email.toLowerCase(),
+        userId: walletAddress.toLowerCase(),
         challengeId
       }
     });
@@ -79,35 +97,66 @@ router.post("/join", async (req, res) => {
       });
     }
 
-    // Create participant record
+    // Create participant record (userId is the wallet address for blockchain integration)
     const participant = await prisma.participant.create({
       data: {
-        userId: email.toLowerCase(),
+        userId: walletAddress.toLowerCase(), // Use wallet address as userId
         challengeId,
         stakeAmount: parseFloat(stakeAmount),
-        escrowAddress: walletAddress.toLowerCase()
+        walletAddress: walletAddress.toLowerCase(),
+        status: 'PENDING' // Will become STAKED after blockchain confirmation
       }
     });
 
-    console.log(`Participant created: ${participant.id}`);
+    // Create submission record with the answer hash
+    const submission = await prisma.submission.create({
+      data: {
+        participantId: participant.id,
+        challengeId,
+        answerHash: answerHash,
+        answerText: answer.trim(), // Store plain answer for DAO verification
+        status: 'PENDING'
+      }
+    });
+
+    console.log(`Participant created: ${participant.id}, Submission created: ${submission.id}`);
+
+    // TODO: Emit event to DAO smart contract for verification
+    // This will be handled when we integrate with ValidatorDAO
+    // The DAO will:
+    // 1. Listen for ParticipantJoined event
+    // 2. Verify the answer hash against challenge's correct answer hash
+    // 3. If correct: trigger SponsorDAO to release reward
+    // 4. If incorrect: participant loses their stake
 
     res.json({
       success: true,
-      message: "Successfully joined challenge! Please complete the blockchain transaction.",
+      message: "Successfully joined challenge! Please complete the blockchain transaction to stake your PYUSD.",
       participant: {
         id: participant.id,
         userId: participant.userId,
         challengeId: participant.challengeId,
         stakeAmount: participant.stakeAmount,
-        joinedAt: participant.joinedAt
+        joinedAt: participant.joinedAt,
+        walletAddress: participant.walletAddress
+      },
+      submission: {
+        id: submission.id,
+        answerHash: answerHash,
+        status: submission.status
       },
       nextStep: {
-        action: "STAKE_ON_BLOCKCHAIN",
+        action: "FUND_CHALLENGE_ON_BLOCKCHAIN",
+        description: "Call SponsorDAO.fundChallenge() to stake PYUSD. Answer hash is NOT sent to contract - stored only in backend DB. Your wallet address is automatically captured via msg.sender.",
         sponsorDaoAddress: challenge.sponsorDaoAddress,
         parameters: {
           chainChallengeId: challenge.chainChallengeId,
-          stakeAmount: stakeAmount,
-          participantAddress: walletAddress
+          amount: stakeAmount
+        },
+        notes: {
+          answerHash: answerHash, // Backend keeps this for verification
+          participantAddress: walletAddress, // Automatically sent as msg.sender when you call fundChallenge
+          verification: "After staking, backend will submit your answer hash to ValidatorDAO for verification"
         }
       }
     });
@@ -175,74 +224,62 @@ router.post("/submit", async (req, res) => {
       },
     });
 
-    // Generate zk-proof via ML model(Siddhant karega)
-    // const proofResponse = await generateProof({ participantId, challengeId, answerText });
-    // For now, mock response:
-    const proofResponse = { zkProof: "0xMOCKZKPROOF", valid: true };
 
-    // Send zk-proof to Validator DAO using ethers.js
-    let verified = false;
-    let validatorTxHash = null;
-    try {
-      // Import ethers.js and contract ABI/address
-      const { ethers } = await import("ethers");
-      // Replace with your actual Validator DAO contract ABI and address
-      const validatorDaoAbi = [];
-      const validatorDaoAddress = process.env.VALIDATOR_DAO_ADDRESS;
-      const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-      const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-      const validatorDaoContract = new ethers.Contract(validatorDaoAddress, validatorDaoAbi, wallet);
-      // Call contract method to verify proof (replace with actual method)
-      // const tx = await validatorDaoContract.verifyProof(submission.id, proofResponse.zkProof);
-      // await tx.wait();
-      // validatorTxHash = tx.hash;
-      validatorTxHash = "0xMOCKVALIDATORTX";
-      verified = true; // Set based on contract response
-    } catch (err) {
-      console.error("Validator DAO contract error:", err);
-      verified = false;
+    // Call ValidatorDAO to verify the answer on-chain
+    // ValidatorDAO will compare answer hashes and call SponsorDAO.completeChallenge() if correct
+    const validatorService = await import("../services/validatorService.js");
+    
+    // Get the challenge data needed for blockchain verification
+    const challenge = await prisma.challenge.findUnique({
+      where: { id: challengeId }
+    });
+
+    // Check if challenge exists on blockchain
+    if (!challenge.chainChallengeId) {
+      console.error(`❌ Challenge "${challenge.title}" has no chainChallengeId - it was never created on blockchain!`);
+      return res.status(400).json({
+        success: false,
+        error: `This challenge was never created on the blockchain and cannot verify answers. Please join a different challenge or ask the creator to create a new one. (Old challenges before the blockchain integration update cannot be used)`,
+        details: {
+          challengeTitle: challenge.title,
+          issue: "chainChallengeId is null",
+          solution: "Create a NEW challenge - the updated frontend will automatically create it on-chain"
+        }
+      });
+    }
+
+    const validationResult = await validatorService.submitToValidatorDAO(
+      submission,
+      challenge,
+      participant
+    );
+
+    if (!validationResult.success) {
+      return res.status(500).json({
+        success: false,
+        error: "Failed to verify answer on blockchain: " + (validationResult.error || "Unknown error")
+      });
     }
 
     const updatedSubmission = await prisma.submission.update({
       where: { id: submission.id },
       data: {
-        status: verified ? "VERIFIED" : "REJECTED",
-        validatorTxHash,
+        status: validationResult.isCorrect ? "VERIFIED" : "REJECTED",
+        validatorTxHash: validationResult.txHash,
       },
     });
 
-    // If verified, trigger escrow payout
-    let escrowTxHash = null;
-    if (verified) {
-      try {
-        // Import escrowService
-        const { releaseEscrow } = await import("../services/escrowService.js");
-        const participant = await prisma.participant.findUnique({ where: { id: participantId }, include: { Challenge: true } });
-        const result = await releaseEscrow({
-          participantId,
-          rewardAmount: participant.Challenge.reward,
-          escrowAddress: participant.escrowAddress,
-        });
-        escrowTxHash = result.txHash;
-        // to Update participant record verification ke baad
-        await prisma.participant.update({
-          where: { id: participantId },
-          data: {
-            rewardReleased: true,
-            rewardTxHash: escrowTxHash,
-            verified: true,
-          },
-        });
-      } catch (err) {
-        console.error("Escrow payout error:", err);
-      }
-    }
+    // Note: Reward payout is handled by SponsorDAO.completeChallenge() automatically
+    // ValidatorDAO calls SponsorDAO.completeChallenge(challengeId, winner) on-chain
+    // SponsorDAO transfers all staked PYUSD to the winner's wallet
+    // Backend listeners will catch ChallengeCompleted event and update participant status
 
     return res.status(201).json({
-      message: verified ? "Submission verified and reward released." : "Submission rejected.",
+      success: true,
+      message: validationResult.isCorrect ? "Answer verified as CORRECT! Reward will be released by SponsorDAO" : "Answer verified as INCORRECT.",
       submission: updatedSubmission,
-      validatorTxHash,
-      escrowTxHash,
+      validatorTxHash: validationResult.txHash,
+      isCorrect: validationResult.isCorrect
     });
   } catch (error) {
     console.error("Error submitting answer:", error);
@@ -292,8 +329,8 @@ router.get("/challenge/:challengeId", async (req, res) => {
       id: p.id,
       userId: p.userId,
       stakeAmount: p.stakeAmount,
-      verified: p.verified,
-      rewardReleased: p.rewardReleased,
+      status: p.status,
+      walletAddress: p.walletAddress,
       joinedAt: p.joinedAt,
       submissionCount: p._count.Submissions,
       submissions: p.Submissions
@@ -340,8 +377,8 @@ router.get("/user/:userId", async (req, res) => {
       challengeId: p.challengeId,
       challenge: p.Challenge,
       stakeAmount: p.stakeAmount,
-      verified: p.verified,
-      rewardReleased: p.rewardReleased,
+      status: p.status,
+      walletAddress: p.walletAddress,
       rewardTxHash: p.rewardTxHash,
       joinedAt: p.joinedAt,
       submissionCount: p._count.Submissions,
@@ -396,15 +433,17 @@ router.get("/:id", async (req, res) => {
 /**
  * PATCH /api/participants/:id/verify
  * Mark participant as verified (validator DAO only)
+ * Note: Status is now handled via the 'status' field (WINNER/LOSER)
  */
 router.patch("/:id/verify", async (req, res) => {
   try {
     const { id } = req.params;
     const { verified, rewardTxHash } = req.body;
 
-    const updateData = { verified };
+    const updateData = { 
+      status: verified ? "WINNER" : "LOSER"
+    };
     if (verified && rewardTxHash) {
-      updateData.rewardReleased = true;
       updateData.rewardTxHash = rewardTxHash;
     }
 
@@ -421,6 +460,64 @@ router.patch("/:id/verify", async (req, res) => {
   } catch (error) {
     console.error("Error verifying participant:", error);
     res.status(500).json({ success: false, error: "Failed to verify participant" });
+  }
+});
+
+/**
+ * POST /api/participants/:id/verify-answer
+ * Verify participant's answer (simulates ValidatorDAO smart contract)
+ * This is for testing before smart contract integration
+ */
+router.post("/:id/verify-answer", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get participant
+    const participant = await prisma.participant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        challengeId: true,
+        userId: true
+      }
+    });
+
+    if (!participant) {
+      return res.status(404).json({
+        success: false,
+        error: "Participant not found"
+      });
+    }
+
+    // Verify answer
+    const verificationResult = await verifyParticipantAnswer(id, participant.challengeId);
+
+    if (!verificationResult.success) {
+      return res.status(400).json(verificationResult);
+    }
+
+    // If answer is correct, release reward
+    if (verificationResult.isCorrect) {
+      const rewardResult = await releaseReward(id);
+      
+      return res.json({
+        success: true,
+        message: "Answer verified and reward released!",
+        verification: verificationResult,
+        reward: rewardResult
+      });
+    }
+
+    // Answer was incorrect
+    return res.json({
+      success: true,
+      message: "Answer verification completed",
+      verification: verificationResult
+    });
+
+  } catch (error) {
+    console.error("Error verifying answer:", error);
+    res.status(500).json({ success: false, error: "Failed to verify answer" });
   }
 });
 

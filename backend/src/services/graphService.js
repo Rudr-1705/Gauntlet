@@ -53,7 +53,7 @@ export async function getPlatformStats() {
         orderBy: { joinedAt: 'desc' },
         take: 10,
         include: {
-          challenge: {
+          Challenge: {
             select: {
               title: true,
               domain: true
@@ -141,9 +141,9 @@ export async function getPlatformStats() {
       });
     });
     
-    // Add verified submissions
+    // Add winner submissions (status === 'WINNER')
     participants
-      .filter(p => p.verified)
+      .filter(p => p.status === 'WINNER')
       .slice(0, 2)
       .forEach(participant => {
         recentActivity.push({

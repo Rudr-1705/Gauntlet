@@ -15,10 +15,36 @@ export async function submitToValidatorDAO(submission, challenge, participant) {
   try {
     console.log(`[ValidatorDAO] Submitting answer for challenge ${challenge.id}`);
     
-    // Get wallet address from participant (should be stored during join)
-    // For now, use userId as placeholder - MUST be actual wallet in production
-    const participantAddress = participant.escrowAddress || participant.userId;
+    // CRITICAL: Check if validator private key is configured
+    if (!process.env.VALIDATOR_PRIVATE_KEY || process.env.VALIDATOR_PRIVATE_KEY === "PENDING_WALLET_KEY") {
+      const errorMsg = "❌ VALIDATOR_PRIVATE_KEY not configured! Cannot verify answers on blockchain. Please generate a validator wallet and update backend/src/.env";
+      console.error(errorMsg);
+      return {
+        success: false,
+        error: errorMsg
+      };
+    }
     
+    // CRITICAL: Check if challenge exists on blockchain
+    if (!challenge.chainChallengeId || challenge.chainChallengeId === null) {
+      const errorMsg = `❌ Challenge "${challenge.title}" was never created on blockchain! chainChallengeId is null. This challenge cannot be verified. Please create a NEW challenge (the frontend will automatically create it on-chain).`;
+      console.error(errorMsg);
+      return {
+        success: false,
+        error: errorMsg
+      };
+    }
+    
+    // Get wallet address from participant
+    const participantAddress = participant.walletAddress;
+    
+    if (!participantAddress) {
+      return {
+        success: false,
+        error: 'Participant wallet address not found'
+      };
+    }
+
     const blockchainData = {
       validatorDaoAddress: challenge.validatorDaoAddress || process.env.VALIDATOR_DAO_ADDRESS,
       chainChallengeId: challenge.chainChallengeId,
@@ -29,28 +55,30 @@ export async function submitToValidatorDAO(submission, challenge, participant) {
 
     console.log('[ValidatorDAO] Calling ValidatorDAO.submitAnswer():', blockchainData);
 
-    // TODO: Actual blockchain call
-    // const { ethers } = await import("ethers");
-    // const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
-    // const wallet = new ethers.Wallet(process.env.VALIDATOR_PRIVATE_KEY, provider);
-    // const validatorDAO = new ethers.Contract(
-    //   blockchainData.validatorDaoAddress,
-    //   VALIDATOR_DAO_ABI,
-    //   wallet
-    // );
-    // const tx = await validatorDAO.submitAnswer(
-    //   blockchainData.chainChallengeId,
-    //   blockchainData.submittedAnswerHash,
-    //   blockchainData.correctAnswerHash,
-    //   blockchainData.participantAddress
-    // );
-    // await tx.wait();
-    // const txHash = tx.hash;
-
-    // Simulate blockchain transaction for now
-    const txHash = `0x${Math.random().toString(16).substr(2, 64)}`;
+    // Call ValidatorDAO smart contract
+    const { ethers } = await import("ethers");
+    const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+    const validatorWallet = new ethers.Wallet(process.env.VALIDATOR_PRIVATE_KEY, provider);
+    const validatorAbi = await import("../abis/ValidatorDAO.json", { assert: { type: "json" } });
+    const validatorDAO = new ethers.Contract(
+      blockchainData.validatorDaoAddress,
+      validatorAbi.default,
+      validatorWallet
+    );
     
-    // Simulate checking if answer is correct
+    const tx = await validatorDAO.submitAnswer(
+      blockchainData.chainChallengeId,
+      blockchainData.submittedAnswerHash,
+      blockchainData.correctAnswerHash,
+      blockchainData.participantAddress
+    );
+    
+    console.log('[ValidatorDAO] Transaction sent:', tx.hash);
+    const receipt = await tx.wait();
+    console.log('[ValidatorDAO] Transaction confirmed:', receipt);
+    const txHash = receipt.hash;
+
+    // Get result from transaction logs
     const isCorrect = compareHashes(submission.answerHash, challenge.correctAnswerHash);
     
     // Log Event 1: Answer Submitted (mimics smart contract event)
@@ -195,7 +223,7 @@ async function completeChallenge(challengeId, winnerId, txHash) {
           winners: verifiedSubmissions.map(s => ({
             participantId: s.participantId,
             participantEmail: s.Participant.userId,
-            participantAddress: s.Participant.escrowAddress || s.Participant.userId,
+            participantAddress: s.Participant.walletAddress,
             submissionId: s.id
           })),
           timestamp: new Date().toISOString()
@@ -211,8 +239,7 @@ async function completeChallenge(challengeId, winnerId, txHash) {
       await prisma.participant.update({
         where: { id: submission.participantId },
         data: {
-          verified: true,
-          rewardReleased: true,
+          status: 'WINNER',
           rewardTxHash: txHash
         }
       });
@@ -225,18 +252,11 @@ async function completeChallenge(challengeId, winnerId, txHash) {
           eventType: 'WINNER_FOUND',
           txHash: winnerTxHash,
           eventData: JSON.stringify({
-            challengeId,
-            participantId: submission.participantId,
-            participantEmail: submission.Participant.userId,
-            participantAddress: submission.Participant.escrowAddress || submission.Participant.userId,
-            rewardAmount: rewardPerWinner,
-            pyusdTransferred: true, // Smart contract already sent PYUSD
-            timestamp: new Date().toISOString()
+            participant: submission.participantId,
+            submissionId: submission.id
           })
         }
       });
-
-      console.log(`[ValidatorDAO] Smart contract event: WinnerFound(challengeId=${challenge.chainChallengeId}, winner=${submission.Participant.userId}, reward=${rewardPerWinner} PYUSD)`);
     }
 
     return {

@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { PlusCircle, Sparkles, Wallet as WalletIcon, DollarSign, Target, FileText, Tag, Mail, CheckCircle, AlertCircle, Info, Zap, TrendingUp } from 'lucide-react';
 import { challengesAPI, handleApiError } from '../services/api';
+import { createChallengeOnChain } from '../services/contractService';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { useConnect } from 'wagmi';
@@ -80,7 +81,7 @@ const CreateChallenge = () => {
     setError(null);
 
     try {
-      // Use NEW /create endpoint with hash-based validation
+      // Step 1: Create challenge in database (gets ML approval)
       const response = await challengesAPI.create({
         title: formData.title,
         description: formData.description,
@@ -92,17 +93,18 @@ const CreateChallenge = () => {
         walletAddress: address,
       });
 
-      setSuccess(true);
-      console.log('Challenge created:', response.data);
+      console.log('Challenge created in DB:', response.data);
+      const challengeId = response.data.challenge.id;
+      const domain = formData.domain;
 
       // Check if ML processing info is included
       if (response.data.info && response.data.info.steps) {
         setMlProcessing(true);
         setProcessingSteps(response.data.info.steps);
-        setCreatedChallengeId(response.data.challenge.id);
+        setCreatedChallengeId(challengeId);
         
-        // Poll challenge status to check when it goes live
-        pollChallengeStatus(response.data.challenge.id);
+        // Wait for ML approval, then create on blockchain
+        pollAndCreateOnChain(challengeId, domain, parseFloat(formData.reward));
       } else {
         // Old flow - redirect after 2 seconds
         setTimeout(() => {
@@ -112,31 +114,91 @@ const CreateChallenge = () => {
     } catch (err) {
       console.error('Error creating challenge:', err);
       setError(handleApiError(err));
-    } finally {
       setLoading(false);
     }
   };
 
-  // Poll challenge status to check when ML processing is complete
-  const pollChallengeStatus = async (challengeId) => {
+  // Poll challenge status and create on blockchain when approved
+  const pollAndCreateOnChain = async (challengeId, domain, reward) => {
     let attempts = 0;
-    const maxAttempts = 10; // Poll for up to 20 seconds (10 attempts x 2 sec)
+    const maxAttempts = 15; // Poll for up to 30 seconds
     
-    const checkStatus = async () => {
+    const checkStatusAndCreate = async () => {
       try {
         const response = await challengesAPI.getById(challengeId);
         const challenge = response.data.challenge || response.data;
         
-        if (challenge.status === 'live' || challenge.status === 'funded') {
-          // Success! Challenge is live
-          setMlProcessing(false);
-          setTimeout(() => {
-            navigate('/my-challenges');
-          }, 2000);
+        if (challenge.status === 'funded') {
+          // ML approved! Now create on blockchain
+          console.log('✅ ML approved challenge. Creating on blockchain...');
+          setProcessingSteps(prev => [...prev, '✅ ML approved! Creating on blockchain...']);
+          
+          try {
+            // Step 2: Create challenge on SponsorDAO contract
+            let blockchainResult;
+            try {
+              blockchainResult = await createChallengeOnChain({
+                reward,
+                domain,
+                metadataURI: `challenge-${challengeId}`
+              });
+              console.log('✅ Challenge created on blockchain:', blockchainResult);
+            } catch (blockchainError) {
+              console.error('❌ Blockchain transaction failed:', blockchainError);
+              
+              // Check if it's a network error
+              if (blockchainError.message.includes('network') || blockchainError.message.includes('chain')) {
+                setError('Please switch to Sepolia testnet in MetaMask. Click the network dropdown in MetaMask and select Sepolia.');
+              } else if (blockchainError.code === 4001) {
+                setError('Transaction rejected. Please try again and approve the MetaMask transaction.');
+              } else {
+                setError('Failed to create challenge on blockchain: ' + blockchainError.message);
+              }
+              
+              setMlProcessing(false);
+              setLoading(false);
+              return; // Exit early if blockchain fails
+            }
+            
+            // Step 3: Update database with chainChallengeId
+            try {
+              await challengesAPI.updateChainId(challengeId, {
+                chainChallengeId: blockchainResult.challengeId,
+                txHash: blockchainResult.txHash,
+                blockNumber: blockchainResult.blockNumber
+              });
+              console.log('✅ Database updated with chainChallengeId');
+            } catch (updateError) {
+              console.error('❌ Database update failed (but blockchain succeeded):', updateError);
+              
+              // Challenge is live on blockchain, just DB update failed
+              setError(`Challenge created on blockchain successfully! (TX: ${blockchainResult.txHash?.slice(0, 10)}...) However, there was an issue updating the database. Please contact support with this transaction hash.`);
+              setMlProcessing(false);
+              setLoading(false);
+              return;
+            }
+
+            // Success!
+            setSuccess(true);
+            setMlProcessing(false);
+            setLoading(false);
+            
+            setTimeout(() => {
+              navigate('/my-challenges');
+            }, 2000);
+            
+          } catch (unexpectedError) {
+            console.error('❌ Unexpected error:', unexpectedError);
+            setError('An unexpected error occurred: ' + unexpectedError.message);
+            setMlProcessing(false);
+            setLoading(false);
+          }
           return;
+          
         } else if (challenge.status === 'rejected') {
           // Challenge was rejected by ML model
           setMlProcessing(false);
+          setLoading(false);
           setError('Challenge was not approved by our AI model. Please try again with a clearer description.');
           return;
         }
@@ -144,23 +206,25 @@ const CreateChallenge = () => {
         // Still pending, check again
         attempts++;
         if (attempts < maxAttempts) {
-          setTimeout(checkStatus, 2000); // Check every 2 seconds
+          setTimeout(checkStatusAndCreate, 2000); // Check every 2 seconds
         } else {
-          // Timeout - redirect anyway
+          // Timeout
           setMlProcessing(false);
-          navigate('/my-challenges');
+          setLoading(false);
+          setError('ML approval timeout. Please check "My Challenges" later.');
         }
+        
       } catch (err) {
-        console.error('Error polling challenge status:', err);
-        setMlProcessing(false);
-        navigate('/my-challenges');
+        console.error('Error polling challenge:', err);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(checkStatusAndCreate, 2000);
+        }
       }
     };
     
-    // Start polling after 1 second
-    setTimeout(checkStatus, 1000);
+    checkStatusAndCreate();
   };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-purple-50/30 to-pink-50/30 dark:from-gray-900 dark:via-purple-950/20 dark:to-pink-950/20">
       <div className="relative overflow-hidden bg-gradient-to-r from-purple-600 via-pink-600 to-orange-600 dark:from-purple-700 dark:via-pink-700 dark:to-orange-700">
@@ -424,7 +488,7 @@ const CreateChallenge = () => {
                         value={formData.reward}
                         onChange={handleChange}
                         required
-                        min="1"
+                        min="0.01"
                         step="0.01"
                         placeholder="500"
                         className="w-full px-4 py-4 rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:border-green-500 dark:focus:border-green-400 focus:ring-4 focus:ring-green-500/20 transition-all duration-300 font-bold text-lg"
@@ -433,6 +497,9 @@ const CreateChallenge = () => {
                         PYUSD
                       </span>
                     </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      Minimum reward: 0.01 PYUSD
+                    </p>
                   </div>
                 </div>
                 <div>
